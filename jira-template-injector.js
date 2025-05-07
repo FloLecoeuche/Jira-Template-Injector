@@ -12,7 +12,7 @@
   'use strict';
 
   const GITHUB_BASE_URL =
-    'https://raw.githubusercontent.com/YourUsername/YourRepository/main/templates/'; // <-- Change this URL to your GitHub repo
+    'https://raw.githubusercontent.com/FloLecoeuche/Jira-Template-Injector/tree/main/templates/'; // <-- Change this URL to your GitHub repo
 
   /**
    * Waits for a DOM element to appear
