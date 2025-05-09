@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Jira Template Injector (Dynamic Script)
+// @name         Jira Template Injector (With Key Extraction)
 // @namespace    https://github.com/FloLecoeuche/Jira-Template-Injector
-// @version      2.1
-// @description  Automatically fill Jira issues based on project and issue type templates. Fully dynamic, no hardcoded fields! Supports spaces in names by converting to hyphens. 🚀
-// @author       Florian LCOEUCHE
+// @version      2.2
+// @description  Auto-fill Jira fields based on project key (from parentheses) and issue type. Fully dynamic. No hardcoded fields. 🚀
+// @author       Florian LECOEUCHE
 // @match        https://blue-whale.atlassian.net/jira/*
 // @grant        none
 // ==/UserScript==
@@ -13,6 +13,8 @@
 
   const GITHUB_BASE_URL =
     'https://raw.githubusercontent.com/FloLecoeuche/Jira-Template-Injector/main/templates/';
+
+  let currentTemplateKey = ''; // For deduplication
 
   const waitForElement = (selector, timeout = 10000) => {
     return new Promise((resolve, reject) => {
@@ -33,18 +35,17 @@
     });
   };
 
-  const formatForFilename = (text) => {
-    return text.trim().toUpperCase().replace(/\s+/g, '-');
-  };
-
   const getProjectKey = () => {
     const el = document.querySelector('[data-testid="project-select"] span');
-    return el ? el.textContent.trim() : null;
+    if (!el) return null;
+
+    const match = el.textContent.match(/\(([^)]+)\)/);
+    return match ? match[1].trim().toUpperCase() : null;
   };
 
   const getIssueType = () => {
     const el = document.querySelector('[data-testid="issuetype-select"] span');
-    return el ? el.textContent.trim() : null;
+    return el ? el.textContent.trim().toUpperCase().replace(/\s+/g, '-') : null;
   };
 
   const injectTextValue = (fieldName, value) => {
@@ -66,7 +67,6 @@
       return;
 
     wrapper.click();
-
     setTimeout(() => {
       const options = Array.from(document.querySelectorAll('[role="option"]'));
       const match = options.find(
@@ -101,38 +101,57 @@
 
   const loadAndInjectTemplate = async () => {
     try {
-      await waitForElement('form[data-testid="issue-create.modal.form"]');
+      const projectKey = getProjectKey();
+      const issueType = getIssueType();
 
-      const rawProjectKey = getProjectKey();
-      const rawIssueType = getIssueType();
+      if (!projectKey || !issueType) return;
 
-      if (!rawProjectKey || !rawIssueType) return;
+      const templateKey = `${projectKey}_${issueType}`;
 
-      const projectKey = formatForFilename(rawProjectKey);
-      const issueType = formatForFilename(rawIssueType);
+      // Prevent re-loading the same template multiple times
+      if (templateKey === currentTemplateKey) return;
 
-      const templateUrl = `${GITHUB_BASE_URL}${projectKey}_${issueType}.json`;
+      currentTemplateKey = templateKey;
+      const templateUrl = `${GITHUB_BASE_URL}${templateKey}.json`;
+
+      console.log(`[Jira Template Injector] Trying to load: ${templateUrl}`);
 
       const response = await fetch(templateUrl);
-      if (!response.ok) return;
+      if (!response.ok) {
+        console.warn(
+          `[Jira Template Injector] No template found for ${templateKey}`
+        );
+        return;
+      }
 
       const template = await response.json();
       injectTemplateFields(template);
     } catch (err) {
-      console.warn('[Jira Template Injector]', err);
+      console.error('[Jira Template Injector] Error:', err);
     }
   };
 
-  const observeModal = () => {
+  const observeDynamicChanges = () => {
     const observer = new MutationObserver(() => {
       const modal = document.querySelector(
         'form[data-testid="issue-create.modal.form"]'
       );
-      if (modal) loadAndInjectTemplate();
+      if (!modal) return;
+
+      const projectSelector = document.querySelector(
+        '[data-testid="project-select"]'
+      );
+      const typeSelector = document.querySelector(
+        '[data-testid="issuetype-select"]'
+      );
+
+      if (projectSelector && typeSelector) {
+        loadAndInjectTemplate();
+      }
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
   };
 
-  observeModal();
+  observeDynamicChanges();
 })();

@@ -20,13 +20,14 @@ Jira Template Injector is a dynamic and fully customizable Tampermonkey script t
 ```plaintext
 .
 ├── templates/
-│   ├── BLUEWHALE_BUG.json
-│   ├── BLUEWHALE_TASK.json
-│   ├── BLUEWHALE_USER-STORY.json
+│   ├── MYPROJECT_BUG.json
+│   ├── MYPROJECT_TASK.json
+│   ├── MYPROJECT_USER-STORY.json
 │   └── MYPROJECT_EPIC.json
 ├── jira-template-injector.user.js
 └── README.md
 ```
+
 - **templates/**: Directory containing all JSON templates, named using the pattern `[PROJECT_KEY]_[WORK_TYPE].json`.
 - **jira-template-injector.user.js**: The Tampermonkey script that dynamically loads and applies the templates.
 - **README.md**: This documentation file.
@@ -38,15 +39,17 @@ Jira Template Injector is a dynamic and fully customizable Tampermonkey script t
 3. Create a new Tampermonkey script and paste the code.
 4. Set the `GITHUB_BASE_URL` constant in the script to point to this repository's raw URL for the templates:
    ```javascript
-   const GITHUB_BASE_URL = 'https://raw.githubusercontent.com/YourUsername/YourRepository/main/templates/';
+   const GITHUB_BASE_URL =
+     'https://raw.githubusercontent.com/YourUsername/YourRepository/main/templates/';
    ```
 5. Save the script.
 
 ## ✨ How to create or update templates
 
 1. Go to the templates/ folder in this repository.
-2. Create a new JSON file named [PROJECT_KEY]_[WORK_TYPE].json (e.g., BLUEWHALE_USER-STORY.json).
+2. Create a new JSON file named [PROJECT_KEY]\_[WORK_TYPE].json (e.g., EG_USER-STORY.json).
 3. Add your desired fields in JSON format:
+
 ```json
 {
   "summary": "Default Summary",
@@ -56,31 +59,38 @@ Jira Template Injector is a dynamic and fully customizable Tampermonkey script t
   "customfield_10010": "Custom Value"
 }
 ```
+
 4. Save the file. All team members will automatically use the new template without modifying the script.
 
 ## ✅ Usage
+
 - Go to your Jira instance (e.g., https://blue-whale.atlassian.net/jira/).
 - Click on the "Create" button.
 - Select your Project and Issue Type.
 - The script will automatically fill the form based on the matching JSON template.
 
 ## 👥 Contribution
+
 Contributions are welcome! To contribute:
+
 1. Fork this repository.
 2. Create a new branch:
+
 ```bash
 git checkout -b feature/your-feature-name
 ```
+
 3. Make your changes.
 4. Submit a pull request.
 
 ## 📋 Pull Request Template
+
 - Title: Clear and descriptive (e.g., Feature: Add support for new field type).
 - Description: Describe your changes clearly.
 - Checklist:
-    Code is clean and well-documented.
-    No hardcoded fields in the script.
-    The new feature is fully dynamic (no changes required in the script for new fields).
+  Code is clean and well-documented.
+  No hardcoded fields in the script.
+  The new feature is fully dynamic (no changes required in the script for new fields).
 
 ## 📜 License
 
