@@ -1,130 +1,87 @@
 (function () {
   'use strict';
 
-  console.log('[Jira Template Injector] Script started');
+  console.log('[Jira Template Injector] 🔁 Script loaded');
 
   const GITHUB_BASE_URL =
     'https://raw.githubusercontent.com/FloLecoeuche/Jira-Template-Injector/main/templates/';
   let currentTemplateKey = '';
 
-  const waitForElement = (selector, timeout = 10000) => {
-    return new Promise((resolve, reject) => {
-      const interval = 100;
-      let elapsed = 0;
-      const checkExist = setInterval(() => {
-        const el = document.querySelector(selector);
-        if (el) {
-          clearInterval(checkExist);
-          resolve(el);
-        }
-        elapsed += interval;
-        if (elapsed >= timeout) {
-          clearInterval(checkExist);
-          reject(`Timeout waiting for selector: ${selector}`);
-        }
-      }, interval);
-    });
+  const waitForForm = async () => {
+    for (let i = 0; i < 50; i++) {
+      const form = document.querySelector(
+        '#issue-create\\.ui\\.modal\\.create-form'
+      );
+      if (form) return form;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new Error('Form not found');
   };
 
   const getProjectKey = () => {
-    const wrapper = document.getElementById(
-      'issue-create.ui.modal.create-form.project-picker.project-select'
+    const el = document.querySelector(
+      '#issue-create\\.ui\\.modal\\.create-form\\.project-picker\\.project-select div[data-testid="issue-field-select-base.ui.format-option-label.c-label"]'
     );
-    if (!wrapper) {
-      console.warn(
-        '[Jira Template Injector] ❌ Project select wrapper not found'
-      );
-      return null;
-    }
-
-    const el = wrapper.querySelector('span'); // ou 'div' si le texte est dans un <div>
     if (!el) {
-      console.warn('[Jira Template Injector] ❌ Project span not found');
+      console.warn('[Jira Template Injector] ⚠️ Project selector not found');
       return null;
     }
-
-    const rawText = el.textContent || '';
-    const match = rawText.match(/\(([^)]+)\)/);
+    const match = el.textContent.match(/\(([^)]+)\)/);
     const key = match ? match[1].trim().toUpperCase() : null;
-
-    console.log(
-      '[Jira Template Injector] ✅ Found project element text:',
-      rawText
-    );
-    console.log('[Jira Template Injector] 🔑 Parsed project key:', key);
+    console.log('[Jira Template Injector] 🔑 Project text:', el.textContent);
+    console.log('[Jira Template Injector] 🔑 Project key parsed:', key);
     return key;
   };
 
   const getIssueType = () => {
-    const wrapper = document.getElementById(
-      'issue-create.ui.modal.create-form.type-picker.issue-type-select'
+    const el = document.querySelector(
+      '#issue-create\\.ui\\.modal\\.create-form\\.type-picker\\.issue-type-select div[data-testid="issue-field-select-base.ui.format-option-label.c-label"]'
     );
-    if (!wrapper) {
-      console.warn(
-        '[Jira Template Injector] ❌ Issue type select wrapper not found'
-      );
-      return null;
-    }
-
-    const el = wrapper.querySelector('span');
     if (!el) {
-      console.warn('[Jira Template Injector] ❌ Issue type span not found');
+      console.warn('[Jira Template Injector] ⚠️ Issue type selector not found');
       return null;
     }
-
-    const rawText = el.textContent || '';
-    const type = rawText.trim().toUpperCase().replace(/\s+/g, '-');
-
-    console.log(
-      '[Jira Template Injector] ✅ Found issue type element text:',
-      rawText
-    );
-    console.log('[Jira Template Injector] 🏷️ Parsed issue type:', type);
+    const type = el.textContent.trim().toUpperCase().replace(/\s+/g, '-');
+    console.log('[Jira Template Injector] 🏷️ Issue type text:', el.textContent);
+    console.log('[Jira Template Injector] 🏷️ Issue type parsed:', type);
     return type;
   };
 
-  const injectTextValue = (fieldName, value) => {
-    const input = document.querySelector(`[name="${fieldName}"]`);
+  const injectTextField = (field, value) => {
+    const input = document.querySelector(
+      `input[name="${field}"], textarea[name="${field}"]`
+    );
     if (!input) {
-      console.warn(
-        `[Jira Template Injector] ❌ Input field not found: ${fieldName}`
+      console.warn(`[Jira Template Injector] ❌ Field "${field}" not found`);
+      return;
+    }
+    if (input.value.trim() !== '') {
+      console.log(
+        `[Jira Template Injector] 🔃 Field "${field}" already filled`
       );
       return;
     }
-    if (input.value.trim() === '') {
-      input.value = value;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      console.log(
-        `[Jira Template Injector] ✍️ Injected value into ${fieldName}:`,
-        value
-      );
-    } else {
-      console.log(
-        `[Jira Template Injector] ⏩ Field ${fieldName} already filled, skipping`
-      );
-    }
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    console.log(`[Jira Template Injector] ✅ Injected "${field}": ${value}`);
   };
 
   const injectTemplateFields = (template) => {
     Object.entries(template).forEach(([field, config]) => {
-      if (!config || typeof config !== 'object' || config.type !== 'text') {
-        console.warn(
-          `[Jira Template Injector] ⛔ Unsupported field type or invalid config for "${field}"`,
-          config
+      if (!config || typeof config !== 'object') return;
+      if (config.type === 'text') {
+        injectTextField(field, config.value);
+      } else {
+        console.log(
+          `[Jira Template Injector] ℹ️ Skipping unsupported type for "${field}": ${config.type}`
         );
-        return;
       }
-
-      injectTextValue(field, config.value);
     });
   };
 
   const loadAndInjectTemplate = async () => {
     console.log('[Jira Template Injector] 🚀 Starting injection process');
-
-    const form = document.querySelector(
-      '#issue-create\\.ui\\.modal\\.create-form'
-    );
+    const form = await waitForForm();
     if (!form) {
       console.warn('[Jira Template Injector] ❌ Form not found');
       return;
@@ -143,53 +100,46 @@
 
     const templateKey = `${projectKey}_${issueType}`;
     if (templateKey === currentTemplateKey) {
-      console.log(
-        '[Jira Template Injector] 💤 Template already injected, skipping'
-      );
+      console.log('[Jira Template Injector] ⏭ Template already injected');
       return;
     }
 
     currentTemplateKey = templateKey;
     const templateUrl = `${GITHUB_BASE_URL}${templateKey}.json`;
-    console.log('[Jira Template Injector] 🌐 Fetching template:', templateUrl);
+    console.log(
+      `[Jira Template Injector] 🌐 Fetching template: ${templateUrl}`
+    );
 
     try {
       const response = await fetch(templateUrl);
-      if (!response.ok) {
-        console.warn(
-          '[Jira Template Injector] ❌ Template not found at:',
-          templateUrl
-        );
-        return;
-      }
-
+      if (!response.ok) throw new Error('Template fetch failed');
       const template = await response.json();
-      console.log('[Jira Template Injector] 📦 Template loaded:', template);
+      console.log('[Jira Template Injector] 📥 Template loaded:', template);
       injectTemplateFields(template);
-    } catch (error) {
-      console.error(
-        '[Jira Template Injector] ❗ Error fetching template:',
-        error
+    } catch (err) {
+      console.warn(
+        '[Jira Template Injector] ⚠️ Failed to load template:',
+        err.message
       );
     }
   };
 
-  const observeDynamicChanges = () => {
-    const observer = new MutationObserver((mutations) => {
+  const observeModal = () => {
+    const observer = new MutationObserver(() => {
       const modal = document.querySelector(
         '#issue-create\\.ui\\.modal\\.create-form'
       );
-      if (!modal) return;
-
-      console.log(
-        '[Jira Template Injector] 🕵️ Modal detected, reloading template'
-      );
-      loadAndInjectTemplate();
+      if (modal) {
+        console.log(
+          '[Jira Template Injector] 🕵️ Modal detected, reloading template'
+        );
+        loadAndInjectTemplate();
+      }
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
     console.log('[Jira Template Injector] 👀 DOM mutation observer set');
   };
 
-  observeDynamicChanges();
+  observeModal();
 })();
