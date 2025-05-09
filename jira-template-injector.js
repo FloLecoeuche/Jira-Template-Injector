@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  console.log('[JTI] Script started');
+  console.log('[Jira Template Injector] Script started');
 
   const GITHUB_BASE_URL =
     'https://raw.githubusercontent.com/FloLecoeuche/Jira-Template-Injector/main/templates/';
@@ -20,7 +20,7 @@
         elapsed += interval;
         if (elapsed >= timeout) {
           clearInterval(checkExist);
-          reject(`[JTI] Timeout waiting for selector: ${selector}`);
+          reject(`Timeout waiting for selector: ${selector}`);
         }
       }, interval);
     });
@@ -29,128 +29,121 @@
   const getProjectKey = () => {
     const el = document.querySelector('[data-testid="project-select"] span');
     if (!el) {
-      console.warn('[JTI] Project selector not found');
+      console.warn('[Jira Template Injector] Project key element not found');
       return null;
     }
     const match = el.textContent.match(/\(([^)]+)\)/);
     const key = match ? match[1].trim().toUpperCase() : null;
-    console.log(
-      `[JTI] Project full label: "${el.textContent}" → key: "${key}"`
-    );
+    console.log(`[Jira Template Injector] Project key found: ${key}`);
     return key;
   };
 
   const getIssueType = () => {
     const el = document.querySelector('[data-testid="issuetype-select"] span');
     if (!el) {
-      console.warn('[JTI] Issue type selector not found');
+      console.warn('[Jira Template Injector] Issue type element not found');
       return null;
     }
     const type = el.textContent.trim().toUpperCase().replace(/\s+/g, '-');
-    console.log(
-      `[JTI] Issue type label: "${el.textContent}" → type: "${type}"`
-    );
+    console.log(`[Jira Template Injector] Issue type found: ${type}`);
     return type;
   };
 
-  const injectTextValue = (fieldName, value) => {
-    const input = document.querySelector(`[name="${fieldName}"]`);
+  const injectTextField = (field, value) => {
+    console.log(
+      `[Jira Template Injector] Attempting to inject into field: ${field}`
+    );
+    const input = document.querySelector(`[name="${field}"]`);
     if (!input) {
-      console.warn(`[JTI] Input "${fieldName}" not found`);
+      console.warn(`[Jira Template Injector] Field not found: ${field}`);
       return;
     }
     if (input.value.trim() !== '') {
-      console.log(`[JTI] Field "${fieldName}" already filled`);
+      console.log(`[Jira Template Injector] Field already filled: ${field}`);
       return;
     }
     input.value = value;
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    console.log(`[JTI] Injected "${value}" into "${fieldName}"`);
+    console.log(`[Jira Template Injector] Injected value into field: ${field}`);
   };
 
-  const injectTemplateFields = (template) => {
-    console.log('[JTI] Injecting fields...');
-    Object.entries(template).forEach(([fieldName, fieldObj]) => {
-      if (typeof fieldObj !== 'object' || !fieldObj.type || !fieldObj.value) {
-        console.warn(
-          `[JTI] Field "${fieldName}" is invalid or missing type/value`
+  const injectTemplate = (template) => {
+    Object.entries(template).forEach(([field, fieldConfig]) => {
+      if (!fieldConfig || typeof fieldConfig !== 'object') return;
+      if (fieldConfig.type !== 'text') {
+        console.log(
+          `[Jira Template Injector] Skipping non-text field: ${field}`
         );
         return;
       }
-      if (fieldObj.type === 'text') {
-        injectTextValue(fieldName, fieldObj.value);
-      } else {
-        console.log(
-          `[JTI] Skipping field "${fieldName}" with type "${fieldObj.type}"`
-        );
-      }
+      injectTextField(field, fieldConfig.value);
     });
   };
 
   const loadAndInjectTemplate = async () => {
     try {
-      console.log('[JTI] Inject triggered...');
       await waitForElement('form[data-testid="issue-create.modal.form"]');
 
       const projectKey = getProjectKey();
       const issueType = getIssueType();
 
       if (!projectKey || !issueType) {
-        console.warn('[JTI] Missing project or issue type');
+        console.warn(
+          '[Jira Template Injector] Missing project key or issue type'
+        );
         return;
       }
 
       const templateKey = `${projectKey}_${issueType}`;
       if (templateKey === currentTemplateKey) {
         console.log(
-          `[JTI] Template "${templateKey}" already injected, skipping`
+          `[Jira Template Injector] Template ${templateKey} already injected, skipping`
         );
         return;
       }
 
       currentTemplateKey = templateKey;
       const templateUrl = `${GITHUB_BASE_URL}${templateKey}.json`;
-      console.log(`[JTI] Fetching template: ${templateUrl}`);
+      console.log(`[Jira Template Injector] Fetching template: ${templateUrl}`);
 
       const response = await fetch(templateUrl);
       if (!response.ok) {
-        console.warn(`[JTI] Template not found at URL: ${templateUrl}`);
+        console.warn(
+          `[Jira Template Injector] Template not found: ${templateUrl}`
+        );
         return;
       }
 
       const template = await response.json();
-      console.log('[JTI] Template loaded:', template);
-      injectTemplateFields(template);
+      console.log('[Jira Template Injector] Template loaded:', template);
+
+      injectTemplate(template);
     } catch (err) {
-      console.error('[JTI] Error loading template:', err);
+      console.error(
+        '[Jira Template Injector] Error loading or injecting template:',
+        err
+      );
     }
   };
 
-  const observeDynamicChanges = () => {
+  const setupObservers = () => {
     const observer = new MutationObserver(() => {
       const modal = document.querySelector(
         'form[data-testid="issue-create.modal.form"]'
       );
       if (!modal) return;
 
-      console.log('[JTI] Modal detected — checking selectors...');
-      const projectSelector = document.querySelector(
-        '[data-testid="project-select"]'
-      );
-      const typeSelector = document.querySelector(
-        '[data-testid="issuetype-select"]'
-      );
+      const projectKey = getProjectKey();
+      const issueType = getIssueType();
 
-      if (projectSelector && typeSelector) {
+      if (projectKey && issueType) {
         loadAndInjectTemplate();
-      } else {
-        console.warn('[JTI] Missing project or issue type selectors');
       }
     });
 
-    console.log('[JTI] Watching DOM for modal open...');
     observer.observe(document.body, { childList: true, subtree: true });
+    console.log('[Jira Template Injector] DOM mutation observer set');
   };
 
-  observeDynamicChanges();
+  setupObservers();
 })();
