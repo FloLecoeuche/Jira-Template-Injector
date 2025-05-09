@@ -10,17 +10,37 @@
 
 (async function () {
   'use strict';
-  const REMOTE_SCRIPT_URL =
+  const SCRIPT_URL =
     'https://raw.githubusercontent.com/FloLecoeuche/Jira-Template-Injector/main/jira-template-injector.js';
 
-  try {
-    const response = await fetch(REMOTE_SCRIPT_URL);
-    const code = await response.text();
-    eval(code);
-  } catch (error) {
-    console.error(
-      '[Jira Template Injector Loader] Failed to load remote script:',
-      error
-    );
+  function loadScript() {
+    console.log('[Jira Loader] Fetching remote script from:', SCRIPT_URL);
+
+    fetch(SCRIPT_URL)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Failed to fetch script: ' + response.statusText);
+        }
+        return response.text();
+      })
+      .then((script) => {
+        console.log('[Jira Loader] Remote script fetched, evaluating...');
+        try {
+          eval(script);
+          console.log('[Jira Loader] Script executed successfully.');
+        } catch (evalError) {
+          console.error('[Jira Loader] Script evaluation error:', evalError);
+        }
+      })
+      .catch((error) => {
+        console.error('[Jira Loader] Error loading remote script:', error);
+      });
+  }
+
+  // Wait for page load before attempting fetch
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadScript);
+  } else {
+    loadScript();
   }
 })();

@@ -60,28 +60,28 @@
   };
 
   const injectTextValue = (fieldName, value) => {
-    const input = document.querySelector(`[name="\${fieldName}"]`);
+    const input = document.querySelector(`[name="${fieldName}"]`);
     if (input && input.value.trim() === '') {
       input.value = value;
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      console.log(`[Jira Template Injector] Injected value into \${fieldName}`);
+      console.log(`[Jira Template Injector] Injected value into ${fieldName}`);
     }
   };
 
   const injectSelectValue = (fieldName, value) => {
     const wrapper = document.querySelector(
-      `[data-testid="\${fieldName}-select"]`
+      `[data-testid="${fieldName}-select"]`
     );
     if (!wrapper) {
       console.warn(
-        `[Jira Template Injector] Dropdown \${fieldName}-select not found`
+        `[Jira Template Injector] Dropdown ${fieldName}-select not found`
       );
       return;
     }
 
     if (wrapper.textContent.toLowerCase().includes(value.toLowerCase())) {
       console.log(
-        `[Jira Template Injector] Dropdown \${fieldName} already set to \${value}`
+        `[Jira Template Injector] Dropdown ${fieldName} already set to ${value}`
       );
       return;
     }
@@ -95,11 +95,11 @@
       if (match) {
         match.click();
         console.log(
-          `[Jira Template Injector] Selected \${value} in \${fieldName}`
+          `[Jira Template Injector] Selected ${value} in ${fieldName}`
         );
       } else {
         console.warn(
-          `[Jira Template Injector] Value \${value} not found in dropdown \${fieldName}`
+          `[Jira Template Injector] Value ${value} not found in dropdown ${fieldName}`
         );
       }
     }, 200);
@@ -122,7 +122,7 @@
             input.dispatchEvent(
               new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' })
             );
-            console.log(`[Jira Template Injector] Added label: \${label}`);
+            console.log(`[Jira Template Injector] Added label: ${label}`);
           });
         }
       }
@@ -142,7 +142,7 @@
         return;
       }
 
-      const templateKey = `\${projectKey}_\${issueType}`;
+      const templateKey = `${projectKey}_${issueType}`;
       if (templateKey === currentTemplateKey) {
         console.log(
           '[Jira Template Injector] Template already injected, skipping'
@@ -151,7 +151,7 @@
       }
 
       currentTemplateKey = templateKey;
-      const templateUrl = `\${GITHUB_BASE_URL}\${templateKey}.json`;
+      const templateUrl = `${GITHUB_BASE_URL}${templateKey}.json`;
       console.log(
         '[Jira Template Injector] Fetching template from:',
         templateUrl
