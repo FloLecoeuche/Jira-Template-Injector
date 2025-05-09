@@ -28,37 +28,45 @@
     });
   };
 
-  const getProjectKey = () => {
-    const el = document.querySelector('[data-testid="project-select"] span');
-    if (!el) {
+  const getProjectKey = async () => {
+    try {
+      const el = await waitForElement(
+        '[data-testid="project-select"] span',
+        5000
+      );
+      const match = el.textContent.match(/\(([^)]+)\)/);
+      const key = match ? match[1].trim().toUpperCase() : null;
+      console.log(
+        '[Jira Template Injector] Raw project:',
+        el.textContent,
+        '→ Parsed key:',
+        key
+      );
+      return key;
+    } catch (err) {
       console.warn('[Jira Template Injector] Project selector not found');
       return null;
     }
-    const match = el.textContent.match(/\(([^)]+)\)/);
-    const key = match ? match[1].trim().toUpperCase() : null;
-    console.log(
-      '[Jira Template Injector] Raw project:',
-      el.textContent,
-      '→ Parsed key:',
-      key
-    );
-    return key;
   };
 
-  const getIssueType = () => {
-    const el = document.querySelector('[data-testid="issuetype-select"] span');
-    if (!el) {
+  const getIssueType = async () => {
+    try {
+      const el = await waitForElement(
+        '[data-testid="issuetype-select"] span',
+        5000
+      );
+      const type = el.textContent.trim().toUpperCase().replace(/\s+/g, '-');
+      console.log(
+        '[Jira Template Injector] Raw issue type:',
+        el.textContent,
+        '→ Parsed type:',
+        type
+      );
+      return type;
+    } catch (err) {
       console.warn('[Jira Template Injector] Issue type selector not found');
       return null;
     }
-    const type = el.textContent.trim().toUpperCase().replace(/\s+/g, '-');
-    console.log(
-      '[Jira Template Injector] Raw issue type:',
-      el.textContent,
-      '→ Parsed type:',
-      type
-    );
-    return type;
   };
 
   const injectTextField = (fieldName, value) => {
@@ -103,12 +111,11 @@
   const loadAndInjectTemplate = async () => {
     try {
       console.log('[Jira Template Injector] Starting injection process');
-
       await waitForElement('form#issue-create\\.ui\\.modal\\.create-form');
-      console.log('[Jira Template Injector] Form is present');
+      console.log('[Jira Template Injector] Modal form is present');
 
-      const projectKey = getProjectKey();
-      const issueType = getIssueType();
+      const projectKey = await getProjectKey();
+      const issueType = await getIssueType();
       if (!projectKey || !issueType) {
         console.warn(
           '[Jira Template Injector] Missing project key or issue type'
@@ -160,6 +167,7 @@
     console.log('[Jira Template Injector] DOM mutation observer set');
   };
 
+  // Reinject when project or issue type changes
   document.addEventListener('change', () => {
     const modal = document.querySelector(
       'form#issue-create\\.ui\\.modal\\.create-form'
