@@ -101,33 +101,63 @@
 
   const loadAndInjectTemplate = async () => {
     try {
-      const projectKey = getProjectKey();
-      const issueType = getIssueType();
+      console.log('[Jira Template Injector] Checking modal open…');
 
-      if (!projectKey || !issueType) return;
+      await waitForElement('form[data-testid="issue-create.modal.form"]');
+
+      const rawProjectKey = getProjectKey();
+      const rawIssueType = getIssueType();
+
+      console.log('[Jira Template Injector] Raw project:', rawProjectKey);
+      console.log('[Jira Template Injector] Raw issue type:', rawIssueType);
+
+      if (!rawProjectKey || !rawIssueType) {
+        console.warn(
+          '[Jira Template Injector] Project key or issue type not found'
+        );
+        return;
+      }
+
+      const projectKey = rawProjectKey.match(/\(([^)]+)\)/)?.[1]?.toUpperCase();
+      const issueType = rawIssueType.toUpperCase().replace(/\s+/g, '-');
+
+      if (!projectKey || !issueType) {
+        console.warn(
+          '[Jira Template Injector] Formatted project or issue type missing'
+        );
+        return;
+      }
 
       const templateKey = `${projectKey}_${issueType}`;
+      console.log(
+        `[Jira Template Injector] Final template key: ${templateKey}`
+      );
 
-      // Prevent re-loading the same template multiple times
-      if (templateKey === currentTemplateKey) return;
+      if (templateKey === currentTemplateKey) {
+        console.log(
+          '[Jira Template Injector] Already loaded this template, skipping.'
+        );
+        return;
+      }
 
       currentTemplateKey = templateKey;
       const templateUrl = `${GITHUB_BASE_URL}${templateKey}.json`;
 
-      console.log(`[Jira Template Injector] Trying to load: ${templateUrl}`);
+      console.log(`[Jira Template Injector] Fetching template: ${templateUrl}`);
 
       const response = await fetch(templateUrl);
       if (!response.ok) {
         console.warn(
-          `[Jira Template Injector] No template found for ${templateKey}`
+          `[Jira Template Injector] Template not found (404): ${templateUrl}`
         );
         return;
       }
 
       const template = await response.json();
+      console.log('[Jira Template Injector] Template loaded:', template);
       injectTemplateFields(template);
     } catch (err) {
-      console.error('[Jira Template Injector] Error:', err);
+      console.error('[Jira Template Injector] ERROR:', err);
     }
   };
 
