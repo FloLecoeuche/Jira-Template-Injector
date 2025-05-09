@@ -1,15 +1,7 @@
-// ==UserScript==
-// @name         Jira Template Injector (Debug Logging)
-// @namespace    https://github.com/FloLecoeuche/Jira-Template-Injector
-// @version      2.3
-// @description  Auto-fill Jira fields with full debug logs based on project key (from parentheses) and issue type. Fully dynamic. 🚀
-// @author
-// @match        https://blue-whale.atlassian.net/jira/*
-// @grant        none
-// ==/UserScript==
-
 (function () {
   'use strict';
+
+  console.log('[Injected Script] Script started');
 
   const GITHUB_BASE_URL =
     'https://raw.githubusercontent.com/FloLecoeuche/Jira-Template-Injector/main/templates/';
