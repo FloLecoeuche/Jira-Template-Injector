@@ -1,0 +1,8 @@
+# Ignore MacOS system files
+.DS_Store
+
+# Ignore temporary folders
+node_modules/
+dist/
+*.log
+*.tmp

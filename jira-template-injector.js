@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Jira Template Injector (Fully Dynamic - Space Safe)
-// @namespace    https://github.com/ton-org
+// @name         Jira Template Injector (Dynamic Script)
+// @namespace    https://github.com/FloLecoeuche/Jira-Template-Injector
 // @version      2.1
-// @description  Dynamically injects Jira issue templates from JSON files based on project and issue type. Supports spaces in issue types and project names (converted to hyphens). Fully dynamic, no hardcoded fields or project types needed.
-// @author       Florian LECOEUCHE
+// @description  Automatically fill Jira issues based on project and issue type templates. Fully dynamic, no hardcoded fields! Supports spaces in names by converting to hyphens. 🚀
+// @author       Florian LCOEUCHE
 // @match        https://blue-whale.atlassian.net/jira/*
 // @grant        none
 // ==/UserScript==
@@ -12,11 +12,8 @@
   'use strict';
 
   const GITHUB_BASE_URL =
-    'https://raw.githubusercontent.com/FloLecoeuche/Jira-Template-Injector/tree/main/templates/'; // <-- Change this URL to your GitHub repo
+    'https://raw.githubusercontent.com/FloLecoeuche/Jira-Template-Injector/main/templates/';
 
-  /**
-   * Waits for a DOM element to appear
-   */
   const waitForElement = (selector, timeout = 10000) => {
     return new Promise((resolve, reject) => {
       const interval = 100;
@@ -36,35 +33,20 @@
     });
   };
 
-  /**
-   * Formats project key or issue type to match filenames:
-   * - trims spaces
-   * - converts spaces to hyphens
-   * - converts to uppercase
-   */
   const formatForFilename = (text) => {
     return text.trim().toUpperCase().replace(/\s+/g, '-');
   };
 
-  /**
-   * Returns the Jira project key from the modal
-   */
   const getProjectKey = () => {
     const el = document.querySelector('[data-testid="project-select"] span');
     return el ? el.textContent.trim() : null;
   };
 
-  /**
-   * Returns the Jira issue type from the modal
-   */
   const getIssueType = () => {
     const el = document.querySelector('[data-testid="issuetype-select"] span');
     return el ? el.textContent.trim() : null;
   };
 
-  /**
-   * Injects a value into an input or textarea field, only if empty
-   */
   const injectTextValue = (fieldName, value) => {
     const input = document.querySelector(`[name="${fieldName}"]`);
     if (input && input.value.trim() === '') {
@@ -73,9 +55,6 @@
     }
   };
 
-  /**
-   * Injects a value into a dropdown field, only if default is selected
-   */
   const injectSelectValue = (fieldName, value) => {
     const wrapper = document.querySelector(
       `[data-testid="${fieldName}-select"]`
@@ -97,9 +76,6 @@
     }, 200);
   };
 
-  /**
-   * Injects all fields from the template into the Jira form
-   */
   const injectTemplateFields = (template) => {
     Object.entries(template).forEach(([field, value]) => {
       if (!value) return;
@@ -123,9 +99,6 @@
     });
   };
 
-  /**
-   * Load template JSON from GitHub for the current project and issue type
-   */
   const loadAndInjectTemplate = async () => {
     try {
       await waitForElement('form[data-testid="issue-create.modal.form"]');
@@ -141,7 +114,7 @@
       const templateUrl = `${GITHUB_BASE_URL}${projectKey}_${issueType}.json`;
 
       const response = await fetch(templateUrl);
-      if (!response.ok) return; // No template found, do nothing
+      if (!response.ok) return;
 
       const template = await response.json();
       injectTemplateFields(template);
@@ -150,9 +123,6 @@
     }
   };
 
-  /**
-   * Watch for Jira create modal opening
-   */
   const observeModal = () => {
     const observer = new MutationObserver(() => {
       const modal = document.querySelector(
