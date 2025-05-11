@@ -12,12 +12,13 @@
   const ISSUE_TYPE_SELECTOR_ID =
     'issue-create.ui.modal.create-form.type-picker.issue-type-select';
 
-  // Use the EXACT data-testid you confirmed is consistent
-  const DESCRIPTION_FIELD_WRAPPER_SELECTOR = `[data-testid="issue-create.common.ui.fields.description-field.wrapper"]`;
+  const OUTER_FIELD_WRAPPER_TESTID_PREFIX =
+    'issue-create.ui.modal.create-form.layout-renderer.field-renderer.field.';
+  const INNER_RTE_WRAPPER_SELECTOR = `[data-testid="issue-create.common.ui.fields.description-field.wrapper"]`;
 
   const RICH_TEXT_EDITABLE_AREA_SELECTORS = [
     '.ProseMirror[role="textbox"][contenteditable="true"]',
-    '#ak-editor-textarea[contenteditable="true"]', // This is often the one inside the wrapper
+    '#ak-editor-textarea[contenteditable="true"]',
     'div[aria-label*="Main content area"][contenteditable="true"]',
     'div.ak-editor-content-area div[contenteditable="true"]',
   ];
@@ -43,17 +44,18 @@
     `Config: User=${GITHUB_USERNAME}, Repo=${GITHUB_REPONAME}, Branch=${GITHUB_BRANCH}`
   );
 
-  // --- Modal Utility (showConfirmationModal) ---
-  // ... (Keep your existing showConfirmationModal function as it is) ...
+  // --- Modal Utility (showConfirmationModal - no changes) ---
   function showConfirmationModal(fieldName, onInject, onKeep) {
     if (isConfirmationModalOpen) {
       logger.warn(
         '⚠️',
-        'Confirmation modal already open. Ignoring new request.'
+        'Confirmation modal already open. Defaulting to "keep draft".'
       );
+      onKeep();
       return Promise.resolve('keep');
     }
     isConfirmationModalOpen = true;
+    // ... (rest of your showConfirmationModal implementation from previous version)
     return new Promise((resolve) => {
       const modalId = 'jti-confirmation-modal';
       const existingModal = document.getElementById(modalId);
@@ -118,9 +120,9 @@
     });
   }
 
-  // --- Helper Functions ---
+  // --- Helper Functions (no changes to these from previous version) ---
   function getSelectedValueFromPicker(selectorId) {
-    /* ... (no change) ... */
+    /* ... */
     const picker = document.getElementById(selectorId);
     if (picker) {
       const valueContainer = picker.querySelector(
@@ -134,7 +136,7 @@
     return null;
   }
   function extractProjectKey(projectText) {
-    /* ... (no change) ... */
+    /* ... */
     if (!projectText) return null;
     const match = projectText.match(/\(([^)]+)\)$/);
     if (match && match[1]) return match[1].toUpperCase();
@@ -144,18 +146,18 @@
     return projectText.split(' ')[0].toUpperCase();
   }
   function formatIssueType(issueTypeText) {
-    /* ... (no change) ... */
+    /* ... */
     if (!issueTypeText) return null;
     return issueTypeText.toUpperCase().replace(/\s+/g, '-');
   }
   function buildTemplateUrl(projKey, issType) {
-    /* ... (no change) ... */
+    /* ... */
     if (!projKey || !issType) return null;
     const fileName = `${projKey}_${issType}.json`;
     return `https://raw.githubusercontent.com/${GITHUB_USERNAME}/${GITHUB_REPONAME}/${GITHUB_BRANCH}/templates/${fileName}`;
   }
   function triggerInputEvent(element) {
-    /* ... (no change) ... */
+    /* ... */
     const eventInput = new Event('input', { bubbles: true, cancelable: true });
     const eventChange = new Event('change', {
       bubbles: true,
@@ -164,21 +166,24 @@
     element.dispatchEvent(eventInput);
     element.dispatchEvent(eventChange);
   }
-
   function findRichTextEditableArea(containerElement) {
+    /* ... (use your last working version) ... */
     if (!containerElement) return null;
+    const innerRTEWrapper = containerElement.querySelector(
+      INNER_RTE_WRAPPER_SELECTOR
+    );
+    const searchBase = innerRTEWrapper || containerElement;
     for (const selector of RICH_TEXT_EDITABLE_AREA_SELECTORS) {
-      const editableArea = containerElement.querySelector(selector);
+      const editableArea = searchBase.querySelector(selector);
       if (editableArea) return editableArea;
     }
-    if (containerElement.matches('[contenteditable="true"][role="textbox"]')) {
-      return containerElement;
+    if (searchBase.matches('[contenteditable="true"][role="textbox"]')) {
+      return searchBase;
     }
     return null;
   }
-
   function isRichTextEditorEmpty(editorElement) {
-    /* ... (no change, ensure nbsp check is good) ... */
+    /* ... (use your last working version) ... */
     if (!editorElement) return true;
     const placeholderNode = editorElement.querySelector(
       RICH_TEXT_PLACEHOLDER_SELECTOR
@@ -222,9 +227,10 @@
     }
     logger.log('🧠', 'Applying template to fields...', template);
 
+    const injectedSimpleTextFields = new Map(); // Store { fieldId: { target, value } } for simple fields
+
     for (const field of template.fields) {
-      if (field.type !== 'text' && field.type !== 'select') {
-        // Assuming you might add 'select' later
+      if (field.type !== 'text') {
         logger.warn(
           '🧐',
           `Unsupported field type "${field.type}" for field ID: ${field.id}. Skipping.`
@@ -238,90 +244,73 @@
       let targetElement = null;
       let isRichText = false;
       const fieldIdForLog = field.displayName || field.id;
-
       logger.log(`[${fieldIdForLog}] Processing field. Type: ${field.type}`);
 
-      if (field.id.toLowerCase() === 'description' && field.type === 'text') {
+      const outerFieldWrapperSelector = `[data-testid="${OUTER_FIELD_WRAPPER_TESTID_PREFIX}${field.id}"]`;
+      const outerFieldWrapper = document.querySelector(
+        outerFieldWrapperSelector
+      );
+
+      if (outerFieldWrapper) {
         logger.log(
-          `[${fieldIdForLog}] Attempting to find description field using specific wrapper selector.`
+          `[${fieldIdForLog}] Found OUTER field wrapper:`,
+          outerFieldWrapper
         );
-        const descriptionWrapper = document.querySelector(
-          DESCRIPTION_FIELD_WRAPPER_SELECTOR
-        );
-        if (descriptionWrapper) {
+        const rteAreaViaInnerWrapper =
+          findRichTextEditableArea(outerFieldWrapper);
+        if (rteAreaViaInnerWrapper) {
+          targetElement = rteAreaViaInnerWrapper;
+          isRichText = true;
           logger.log(
-            `[${fieldIdForLog}] Found description wrapper:`,
-            descriptionWrapper
+            `[${fieldIdForLog}] Determined as RICH TEXT field. Target:`,
+            targetElement
           );
-          const rteArea = findRichTextEditableArea(descriptionWrapper);
-          if (rteArea) {
-            targetElement = rteArea;
-            isRichText = true;
+        } else {
+          targetElement =
+            outerFieldWrapper.querySelector(
+              `input[id="${field.id}"], textarea[id="${field.id}"]`
+            ) ||
+            outerFieldWrapper.querySelector(
+              `input[name="${field.id}"], textarea[name="${field.id}"]`
+            ) ||
+            outerFieldWrapper.querySelector(
+              'input[type="text"], textarea, input:not([type]), div[contenteditable="true"]:not([role="textbox"])'
+            );
+          if (targetElement) {
+            isRichText = false;
+            if (
+              targetElement.isContentEditable &&
+              findRichTextEditableArea(targetElement)
+            ) {
+              isRichText = true; // It was a generic CE that's also an RTE
+            }
             logger.log(
-              `[${fieldIdForLog}] Found RTE area inside description wrapper:`,
+              `[${fieldIdForLog}] Determined as STANDARD TEXT/GENERIC CE field. Target:`,
               targetElement
             );
           } else {
             logger.warn(
-              `[${fieldIdForLog}] Description wrapper found, but NO RTE area inside.`
+              `[${fieldIdForLog}] OUTER wrapper found, but no recognized input/RTE area inside.`
             );
           }
-        } else {
-          logger.warn(
-            `[${fieldIdForLog}] Description wrapper NOT found using selector: ${DESCRIPTION_FIELD_WRAPPER_SELECTOR}`
-          );
         }
-      } else if (field.type === 'text') {
-        // Generic text field (e.g., summary) or fallback if description specific search failed (though it shouldn't if selector is good)
-        targetElement =
-          document.getElementById(field.id) ||
-          document.querySelector(`[name="${field.id}"]`);
-        if (targetElement) {
-          if (
-            targetElement.value !== undefined &&
-            typeof targetElement.value === 'string' &&
-            !targetElement.isContentEditable
-          ) {
-            isRichText = false; // Standard input/textarea
-          } else if (targetElement.isContentEditable) {
-            const rteArea = findRichTextEditableArea(targetElement); // Check if this generic CE is actually an RTE
-            if (rteArea) {
-              targetElement = rteArea;
-              isRichText = true;
-            } else {
-              isRichText = false; /* Generic CE */
-            }
-          } else {
-            targetElement = null; // Not a suitable text input type
-          }
-        }
-        logger.log(
-          `[${fieldIdForLog}] Generic text field search found:`,
-          targetElement
+      } else {
+        logger.warn(
+          `[${fieldIdForLog}] OUTER field wrapper NOT found using selector: ${outerFieldWrapperSelector}.`
         );
-      } else if (field.type === 'select') {
-        // Placeholder for your select logic
-        logger.log(
-          `[${fieldIdForLog}] Select field type - target finding logic to be implemented.`
-        );
-        targetElement =
-          document.getElementById(field.id) ||
-          document.querySelector(`[data-testid*="${field.id}"]`); // Very basic attempt
+        // Optional: Fallback to direct ID/Name if needed for some fields
       }
 
       if (!targetElement) {
-        logger.warn('🤷', `[${fieldIdForLog}] Field target not found.`);
+        logger.warn(
+          '🤷',
+          `[${fieldIdForLog}] Field target ultimately not found.`
+        );
         await new Promise((resolve) =>
           setTimeout(resolve, FIELD_PROCESS_DELAY_MS)
         );
         continue;
       }
-
-      logger.log(
-        `[${fieldIdForLog}] Final target determined:`,
-        targetElement,
-        `isRichText: ${isRichText}`
-      );
 
       // --- Apply Injection ---
       if (isRichText) {
@@ -381,10 +370,10 @@
           injectRTEContent();
         }
       } else if (
-        field.type === 'text' &&
         targetElement.value !== undefined &&
         typeof targetElement.value === 'string'
       ) {
+        // Standard text input/textarea
         if (targetElement.value.trim() === '') {
           targetElement.value = field.value;
           triggerInputEvent(targetElement);
@@ -392,13 +381,19 @@
             '✍️',
             `Injected into standard input/textarea: ${fieldIdForLog}`
           );
+          injectedSimpleTextFields.set(field.id, {
+            target: targetElement,
+            value: field.value,
+            type: 'input',
+          });
         } else {
           logger.log(
             '🤔',
             `Standard input/textarea: ${fieldIdForLog} already has content, skipped.`
           );
         }
-      } else if (field.type === 'text' && targetElement.isContentEditable) {
+      } else if (targetElement.isContentEditable) {
+        // Generic contentEditable (not an RTE)
         if (targetElement.textContent.trim() === '') {
           targetElement.textContent = field.value;
           triggerInputEvent(targetElement);
@@ -406,18 +401,17 @@
             '✍️',
             `Injected into generic contentEditable: ${fieldIdForLog}`
           );
+          injectedSimpleTextFields.set(field.id, {
+            target: targetElement,
+            value: field.value,
+            type: 'contentEditable',
+          });
         } else {
           logger.log(
             '🤔',
             `Generic contentEditable: ${fieldIdForLog} already has content, skipped.`
           );
         }
-      } else if (field.type === 'select') {
-        logger.log(
-          'ℹ️',
-          `Select field "${fieldIdForLog}" - injection logic to be implemented.`
-        );
-        // Example: await handleSelectField(targetElement, field.value);
       } else {
         logger.warn(
           '🤷',
@@ -428,42 +422,79 @@
       await new Promise((resolve) =>
         setTimeout(resolve, FIELD_PROCESS_DELAY_MS)
       );
+    } // End of for...of loop for fields
+
+    // --- Post-injection re-check for simple text fields that might have been cleared ---
+    if (injectedSimpleTextFields.size > 0) {
+      logger.log(
+        '🛡️',
+        'Performing post-injection check for simple text fields...'
+      );
+      for (const [fieldId, data] of injectedSimpleTextFields) {
+        const { target, value: injectedValue, type } = data;
+        let currentValue = '';
+        if (type === 'input') {
+          currentValue = target.value;
+        } else if (type === 'contentEditable') {
+          currentValue = target.textContent;
+        }
+
+        if (currentValue.trim() !== injectedValue.trim()) {
+          // Check if it's truly empty now but was supposed to have the injectedValue
+          if (currentValue.trim() === '' && injectedValue.trim() !== '') {
+            logger.warn(
+              '🛡️',
+              `Simple text field "${fieldId}" appears to have been cleared. Re-injecting: "${injectedValue}"`
+            );
+            if (type === 'input') {
+              target.value = injectedValue;
+            } else if (type === 'contentEditable') {
+              target.textContent = injectedValue;
+            }
+            triggerInputEvent(target);
+          } else if (injectedValue.trim() !== '') {
+            // Only re-inject if there was something to inject and it changed
+            logger.warn(
+              '🛡️',
+              `Simple text field "${fieldId}" content changed. Re-injecting: "${injectedValue}" (Current: "${currentValue}")`
+            );
+            if (type === 'input') {
+              target.value = injectedValue;
+            } else if (type === 'contentEditable') {
+              target.textContent = injectedValue;
+            }
+            triggerInputEvent(target);
+          }
+        }
+      }
     }
+
     logger.log('🏁', 'Finished applying template fields.');
   }
 
-  // --- Core Logic ---
+  // --- Core Logic (loadAndApplyTemplate, onModalContextChange, observeSelectors, modalObserver - no changes from your previous version) ---
   async function loadAndApplyTemplate() {
     const currentProjectText = getSelectedValueFromPicker(PROJECT_SELECTOR_ID);
     const currentIssueTypeText = getSelectedValueFromPicker(
       ISSUE_TYPE_SELECTOR_ID
     );
-
     const pk = extractProjectKey(currentProjectText);
     const it = formatIssueType(currentIssueTypeText);
-
-    // This log sequence is good for seeing the raw values right before extraction
-    // logger.log('RAW Context:', { currentProjectText, currentIssueTypeText });
     logger.log(
       'ℹ️',
       `Context: Project Text="${currentProjectText}", Issue Type Text="${currentIssueTypeText}"`
     );
     logger.log('🔑', `Extracted: Project Key=${pk}, Issue Type=${it}`);
-
     if (!pk || !it) {
-      // This case IS important. It means the user is likely transitioning between selections.
-      // We should clear currentTemplateData so a subsequent valid selection forces a fresh load.
       logger.warn(
         '❌',
         'Project or Issue Type not fully selected/extracted. Clearing current template state.'
       );
       currentTemplateData = null;
-      lastAttemptedSignature = `project-${pk}_issueType-${it}`; // Record this incomplete state attempt
+      lastAttemptedSignature = `project-${pk}_issueType-${it}`;
       return;
     }
-
     const currentSignature = `${pk}_${it}`;
-
     if (lastAttemptedSignature === currentSignature) {
       if (currentTemplateData) {
         logger.log(
@@ -479,7 +510,6 @@
       }
       return;
     }
-
     logger.log(
       '⏳',
       `New signature: ${currentSignature}. Resetting state and fetching template.`
@@ -487,12 +517,10 @@
     lastAttemptedSignature = currentSignature;
     currentTemplateData = null;
     const templateUrl = buildTemplateUrl(pk, it);
-
     if (!templateUrl) {
       logger.warn('❌', 'Could not build template URL for new signature.');
       return;
     }
-
     logger.log(
       '📦',
       `Loading template for ${currentSignature} from ${templateUrl}`
@@ -520,17 +548,14 @@
 
   function onModalContextChange() {
     logger.log('🔄', 'Modal context change detected.');
-    // Add a very small delay to allow Jira's UI to potentially settle slightly after a picker change
-    // before we try to read values and act.
     setTimeout(() => {
       loadAndApplyTemplate();
-    }, 50); // 50ms delay
+    }, 50);
   }
 
   function observeSelectors() {
     const projectSelector = document.getElementById(PROJECT_SELECTOR_ID);
     const issueTypeSelector = document.getElementById(ISSUE_TYPE_SELECTOR_ID);
-
     if (!projectSelector || !issueTypeSelector) {
       logger.error(
         '❌',
@@ -538,7 +563,6 @@
       );
       return;
     }
-
     logger.log('🔍', 'Observing project/issue type selectors...');
     const observerConfig = {
       childList: true,
@@ -554,8 +578,6 @@
     const issueTypeValueContainer = issueTypeSelector.querySelector(
       '.single-select__value-container, [class*="singleValue"]'
     );
-
-    // Observe the specific value containers if they exist, otherwise the main pickers.
     if (projectValueContainer)
       projectObserver.observe(projectValueContainer, observerConfig);
     else {
@@ -564,7 +586,6 @@
       );
       projectObserver.observe(projectSelector, observerConfig);
     }
-
     if (issueTypeValueContainer)
       issueTypeObserver.observe(issueTypeValueContainer, observerConfig);
     else {
@@ -573,7 +594,6 @@
       );
       issueTypeObserver.observe(issueTypeSelector, observerConfig);
     }
-
     logger.log(
       '🚀',
       'Initial call to loadAndApplyTemplate from observeSelectors.'
@@ -608,7 +628,6 @@
       }
     }
   });
-
   modalObserver.observe(document.body, { childList: true, subtree: true });
   logger.log('👀', 'Observing document body for create modal...');
 })();
