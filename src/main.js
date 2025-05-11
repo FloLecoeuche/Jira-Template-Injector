@@ -12,12 +12,13 @@
   const ISSUE_TYPE_SELECTOR_ID =
     'issue-create.ui.modal.create-form.type-picker.issue-type-select';
 
-  // Use the EXACT data-testid you confirmed is consistent
-  const DESCRIPTION_FIELD_WRAPPER_SELECTOR = `[data-testid="issue-create.common.ui.fields.description-field.wrapper"]`;
+  // Generic prefix for field wrapper data-testids
+  const FIELD_WRAPPER_TESTID_PREFIX =
+    'issue-create.ui.modal.create-form.layout-renderer.field-renderer.field.';
 
   const RICH_TEXT_EDITABLE_AREA_SELECTORS = [
     '.ProseMirror[role="textbox"][contenteditable="true"]',
-    '#ak-editor-textarea[contenteditable="true"]', // This is often the one inside the wrapper
+    '#ak-editor-textarea[contenteditable="true"]',
     'div[aria-label*="Main content area"][contenteditable="true"]',
     'div.ak-editor-content-area div[contenteditable="true"]',
   ];
@@ -43,17 +44,18 @@
     `Config: User=${GITHUB_USERNAME}, Repo=${GITHUB_REPONAME}, Branch=${GITHUB_BRANCH}`
   );
 
-  // --- Modal Utility (showConfirmationModal) ---
-  // ... (Keep your existing showConfirmationModal function as it is) ...
+  // --- Modal Utility (showConfirmationModal - no changes from your last version) ---
   function showConfirmationModal(fieldName, onInject, onKeep) {
     if (isConfirmationModalOpen) {
       logger.warn(
         '⚠️',
-        'Confirmation modal already open. Ignoring new request.'
+        'Confirmation modal already open. Defaulting to "keep draft".'
       );
+      onKeep(); // Call keep callback immediately if modal is already open.
       return Promise.resolve('keep');
     }
     isConfirmationModalOpen = true;
+    // ... (rest of your showConfirmationModal implementation)
     return new Promise((resolve) => {
       const modalId = 'jti-confirmation-modal';
       const existingModal = document.getElementById(modalId);
@@ -171,6 +173,7 @@
       const editableArea = containerElement.querySelector(selector);
       if (editableArea) return editableArea;
     }
+    // Check if the containerElement itself might be the RTE (less common for wrappers but possible)
     if (containerElement.matches('[contenteditable="true"][role="textbox"]')) {
       return containerElement;
     }
@@ -178,7 +181,7 @@
   }
 
   function isRichTextEditorEmpty(editorElement) {
-    /* ... (no change, ensure nbsp check is good) ... */
+    /* ... (no change) ... */
     if (!editorElement) return true;
     const placeholderNode = editorElement.querySelector(
       RICH_TEXT_PLACEHOLDER_SELECTOR
@@ -223,8 +226,8 @@
     logger.log('🧠', 'Applying template to fields...', template);
 
     for (const field of template.fields) {
-      if (field.type !== 'text' && field.type !== 'select') {
-        // Assuming you might add 'select' later
+      // Only process 'text' type for now, as per your script's current capability
+      if (field.type !== 'text') {
         logger.warn(
           '🧐',
           `Unsupported field type "${field.type}" for field ID: ${field.id}. Skipping.`
@@ -235,82 +238,108 @@
         continue;
       }
 
-      let targetElement = null;
+      let targetElement = null; // This will be the actual input/textarea/RTE_content_area
       let isRichText = false;
       const fieldIdForLog = field.displayName || field.id;
 
       logger.log(`[${fieldIdForLog}] Processing field. Type: ${field.type}`);
 
-      if (field.id.toLowerCase() === 'description' && field.type === 'text') {
+      // Construct the generic wrapper selector using the field.id
+      const fieldWrapperSelector = `[data-testid="${FIELD_WRAPPER_TESTID_PREFIX}${field.id}"]`;
+      const fieldWrapper = document.querySelector(fieldWrapperSelector);
+
+      if (fieldWrapper) {
         logger.log(
-          `[${fieldIdForLog}] Attempting to find description field using specific wrapper selector.`
+          `[${fieldIdForLog}] Found field wrapper using selector: ${fieldWrapperSelector}`,
+          fieldWrapper
         );
-        const descriptionWrapper = document.querySelector(
-          DESCRIPTION_FIELD_WRAPPER_SELECTOR
-        );
-        if (descriptionWrapper) {
+
+        // Now, try to find the actual input element or RTE area within this wrapper
+        // Attempt 1: Look for a Rich Text Editor area
+        const rteArea = findRichTextEditableArea(fieldWrapper);
+        if (rteArea) {
+          targetElement = rteArea;
+          isRichText = true;
           logger.log(
-            `[${fieldIdForLog}] Found description wrapper:`,
-            descriptionWrapper
+            `[${fieldIdForLog}] Found RTE area inside wrapper:`,
+            targetElement
           );
-          const rteArea = findRichTextEditableArea(descriptionWrapper);
-          if (rteArea) {
-            targetElement = rteArea;
-            isRichText = true;
+        } else {
+          // Attempt 2: Look for a standard input or textarea within the wrapper
+          // Common input/textarea selectors, or one with an ID matching field.id
+          targetElement =
+            fieldWrapper.querySelector(
+              `input[id="${field.id}"], textarea[id="${field.id}"]`
+            ) ||
+            fieldWrapper.querySelector(
+              `input[name="${field.id}"], textarea[name="${field.id}"]`
+            ) ||
+            fieldWrapper.querySelector('input[type="text"], textarea'); // More generic fallback within wrapper
+
+          if (targetElement) {
+            isRichText = false; // It's a standard input/textarea
             logger.log(
-              `[${fieldIdForLog}] Found RTE area inside description wrapper:`,
+              `[${fieldIdForLog}] Found standard input/textarea inside wrapper:`,
               targetElement
             );
           } else {
-            logger.warn(
-              `[${fieldIdForLog}] Description wrapper found, but NO RTE area inside.`
-            );
+            // Attempt 3: Check if the wrapper itself is a generic contentEditable (less common for this pattern)
+            if (
+              fieldWrapper.isContentEditable &&
+              !findRichTextEditableArea(fieldWrapper)
+            ) {
+              // Ensure it's not already identified as RTE
+              targetElement = fieldWrapper;
+              isRichText = false; // Treat as generic contentEditable
+              logger.log(
+                `[${fieldIdForLog}] Wrapper itself is a generic contentEditable:`,
+                targetElement
+              );
+            } else {
+              logger.warn(
+                `[${fieldIdForLog}] Wrapper found, but no specific input/RTE area identified within.`
+              );
+            }
           }
-        } else {
-          logger.warn(
-            `[${fieldIdForLog}] Description wrapper NOT found using selector: ${DESCRIPTION_FIELD_WRAPPER_SELECTOR}`
-          );
         }
-      } else if (field.type === 'text') {
-        // Generic text field (e.g., summary) or fallback if description specific search failed (though it shouldn't if selector is good)
-        targetElement =
+      } else {
+        logger.warn(
+          `[${fieldIdForLog}] Field wrapper NOT found using selector: ${fieldWrapperSelector}. Trying direct ID/Name.`
+        );
+        // Fallback to direct ID/Name if wrapper not found (less ideal but a safety net)
+        const directTarget =
           document.getElementById(field.id) ||
           document.querySelector(`[name="${field.id}"]`);
-        if (targetElement) {
+        if (directTarget) {
+          logger.log(
+            `[${fieldIdForLog}] Fallback: Found direct target by ID/Name:`,
+            directTarget
+          );
           if (
-            targetElement.value !== undefined &&
-            typeof targetElement.value === 'string' &&
-            !targetElement.isContentEditable
+            directTarget.value !== undefined &&
+            typeof directTarget.value === 'string' &&
+            !directTarget.isContentEditable
           ) {
-            isRichText = false; // Standard input/textarea
-          } else if (targetElement.isContentEditable) {
-            const rteArea = findRichTextEditableArea(targetElement); // Check if this generic CE is actually an RTE
+            targetElement = directTarget;
+            isRichText = false;
+          } else if (directTarget.isContentEditable) {
+            const rteArea = findRichTextEditableArea(directTarget);
             if (rteArea) {
               targetElement = rteArea;
               isRichText = true;
             } else {
-              isRichText = false; /* Generic CE */
+              targetElement = directTarget;
+              isRichText = false;
             }
-          } else {
-            targetElement = null; // Not a suitable text input type
           }
         }
-        logger.log(
-          `[${fieldIdForLog}] Generic text field search found:`,
-          targetElement
-        );
-      } else if (field.type === 'select') {
-        // Placeholder for your select logic
-        logger.log(
-          `[${fieldIdForLog}] Select field type - target finding logic to be implemented.`
-        );
-        targetElement =
-          document.getElementById(field.id) ||
-          document.querySelector(`[data-testid*="${field.id}"]`); // Very basic attempt
       }
 
       if (!targetElement) {
-        logger.warn('🤷', `[${fieldIdForLog}] Field target not found.`);
+        logger.warn(
+          '🤷',
+          `[${fieldIdForLog}] Field target ultimately not found.`
+        );
         await new Promise((resolve) =>
           setTimeout(resolve, FIELD_PROCESS_DELAY_MS)
         );
@@ -323,7 +352,7 @@
         `isRichText: ${isRichText}`
       );
 
-      // --- Apply Injection ---
+      // --- Apply Injection (no changes to this section itself, only to how targetElement/isRichText are set) ---
       if (isRichText) {
         const injectRTEContent = () => {
           logger.log('✍️', `Injecting into rich text editor: ${fieldIdForLog}`);
@@ -381,10 +410,10 @@
           injectRTEContent();
         }
       } else if (
-        field.type === 'text' &&
         targetElement.value !== undefined &&
         typeof targetElement.value === 'string'
       ) {
+        // Standard text input/textarea
         if (targetElement.value.trim() === '') {
           targetElement.value = field.value;
           triggerInputEvent(targetElement);
@@ -398,7 +427,8 @@
             `Standard input/textarea: ${fieldIdForLog} already has content, skipped.`
           );
         }
-      } else if (field.type === 'text' && targetElement.isContentEditable) {
+      } else if (targetElement.isContentEditable) {
+        // Generic contentEditable
         if (targetElement.textContent.trim() === '') {
           targetElement.textContent = field.value;
           triggerInputEvent(targetElement);
@@ -412,13 +442,10 @@
             `Generic contentEditable: ${fieldIdForLog} already has content, skipped.`
           );
         }
-      } else if (field.type === 'select') {
-        logger.log(
-          'ℹ️',
-          `Select field "${fieldIdForLog}" - injection logic to be implemented.`
-        );
-        // Example: await handleSelectField(targetElement, field.value);
-      } else {
+      }
+      // Remove the old 'select' placeholder as current script only handles 'text'
+      // else if (field.type === 'select') { /* ... */ }
+      else {
         logger.warn(
           '🤷',
           `Field: "${fieldIdForLog}" (type: ${field.type}) found, but no specific injection logic matched.`
@@ -432,7 +459,8 @@
     logger.log('🏁', 'Finished applying template fields.');
   }
 
-  // --- Core Logic ---
+  // --- Core Logic (loadAndApplyTemplate, onModalContextChange, observeSelectors, modalObserver) ---
+  // ... (No changes to these core functions from your last provided script, ensure they are correct) ...
   async function loadAndApplyTemplate() {
     const currentProjectText = getSelectedValueFromPicker(PROJECT_SELECTOR_ID);
     const currentIssueTypeText = getSelectedValueFromPicker(
@@ -442,8 +470,6 @@
     const pk = extractProjectKey(currentProjectText);
     const it = formatIssueType(currentIssueTypeText);
 
-    // This log sequence is good for seeing the raw values right before extraction
-    // logger.log('RAW Context:', { currentProjectText, currentIssueTypeText });
     logger.log(
       'ℹ️',
       `Context: Project Text="${currentProjectText}", Issue Type Text="${currentIssueTypeText}"`
@@ -451,14 +477,12 @@
     logger.log('🔑', `Extracted: Project Key=${pk}, Issue Type=${it}`);
 
     if (!pk || !it) {
-      // This case IS important. It means the user is likely transitioning between selections.
-      // We should clear currentTemplateData so a subsequent valid selection forces a fresh load.
       logger.warn(
         '❌',
         'Project or Issue Type not fully selected/extracted. Clearing current template state.'
       );
       currentTemplateData = null;
-      lastAttemptedSignature = `project-${pk}_issueType-${it}`; // Record this incomplete state attempt
+      lastAttemptedSignature = `project-${pk}_issueType-${it}`;
       return;
     }
 
@@ -520,11 +544,9 @@
 
   function onModalContextChange() {
     logger.log('🔄', 'Modal context change detected.');
-    // Add a very small delay to allow Jira's UI to potentially settle slightly after a picker change
-    // before we try to read values and act.
     setTimeout(() => {
       loadAndApplyTemplate();
-    }, 50); // 50ms delay
+    }, 50);
   }
 
   function observeSelectors() {
@@ -555,7 +577,6 @@
       '.single-select__value-container, [class*="singleValue"]'
     );
 
-    // Observe the specific value containers if they exist, otherwise the main pickers.
     if (projectValueContainer)
       projectObserver.observe(projectValueContainer, observerConfig);
     else {
