@@ -1,0 +1,14 @@
+{
+  "fields": [
+    {
+      "id": "summary",
+      "value": "BUG: ",
+      "type": "text"
+    },
+    {
+      "id": "description",
+      "value": "Steps to reproduce:\n1. \n2. \n3. \n\nObserved behavior:\n[Describe what happens]\n\nExpected behavior:\n[Describe what should happen]\n\nEnvironment:\n- Browser: \n- Version: \n- OS: \n\nAdditional information:\n[Screenshots, logs, etc.]",
+      "type": "text"
+    }
+  ]
+}
