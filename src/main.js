@@ -12,9 +12,11 @@
   const ISSUE_TYPE_SELECTOR_ID =
     'issue-create.ui.modal.create-form.type-picker.issue-type-select';
 
-  // Generic prefix for field wrapper data-testids
-  const FIELD_WRAPPER_TESTID_PREFIX =
+  // Generic prefix for the OUTER field wrapper data-testids
+  const OUTER_FIELD_WRAPPER_TESTID_PREFIX =
     'issue-create.ui.modal.create-form.layout-renderer.field-renderer.field.';
+  // Specific data-testid for the INNER wrapper OF a rich text editor
+  const INNER_RTE_WRAPPER_SELECTOR = `[data-testid="issue-create.common.ui.fields.description-field.wrapper"]`;
 
   const RICH_TEXT_EDITABLE_AREA_SELECTORS = [
     '.ProseMirror[role="textbox"][contenteditable="true"]',
@@ -44,18 +46,17 @@
     `Config: User=${GITHUB_USERNAME}, Repo=${GITHUB_REPONAME}, Branch=${GITHUB_BRANCH}`
   );
 
-  // --- Modal Utility (showConfirmationModal - no changes from your last version) ---
+  // --- Modal Utility (showConfirmationModal - no changes) ---
   function showConfirmationModal(fieldName, onInject, onKeep) {
     if (isConfirmationModalOpen) {
       logger.warn(
         '⚠️',
         'Confirmation modal already open. Defaulting to "keep draft".'
       );
-      onKeep(); // Call keep callback immediately if modal is already open.
+      onKeep();
       return Promise.resolve('keep');
     }
     isConfirmationModalOpen = true;
-    // ... (rest of your showConfirmationModal implementation)
     return new Promise((resolve) => {
       const modalId = 'jti-confirmation-modal';
       const existingModal = document.getElementById(modalId);
@@ -169,13 +170,20 @@
 
   function findRichTextEditableArea(containerElement) {
     if (!containerElement) return null;
+    // First, look for the known inner RTE wrapper if this container is supposed to hold an RTE
+    const innerRTEWrapper = containerElement.querySelector(
+      INNER_RTE_WRAPPER_SELECTOR
+    );
+    const searchBase = innerRTEWrapper || containerElement; // Search within inner wrapper if found, else the provided container
+
     for (const selector of RICH_TEXT_EDITABLE_AREA_SELECTORS) {
-      const editableArea = containerElement.querySelector(selector);
+      const editableArea = searchBase.querySelector(selector);
       if (editableArea) return editableArea;
     }
-    // Check if the containerElement itself might be the RTE (less common for wrappers but possible)
-    if (containerElement.matches('[contenteditable="true"][role="textbox"]')) {
-      return containerElement;
+    // Fallback: If no specific selectors match within searchBase,
+    // check if searchBase itself is the editable area (less likely if using wrappers)
+    if (searchBase.matches('[contenteditable="true"][role="textbox"]')) {
+      return searchBase;
     }
     return null;
   }
@@ -226,8 +234,8 @@
     logger.log('🧠', 'Applying template to fields...', template);
 
     for (const field of template.fields) {
-      // Only process 'text' type for now, as per your script's current capability
       if (field.type !== 'text') {
+        // Assuming only 'text' type for now
         logger.warn(
           '🧐',
           `Unsupported field type "${field.type}" for field ID: ${field.id}. Skipping.`
@@ -238,101 +246,80 @@
         continue;
       }
 
-      let targetElement = null; // This will be the actual input/textarea/RTE_content_area
+      let targetElement = null;
       let isRichText = false;
       const fieldIdForLog = field.displayName || field.id;
 
       logger.log(`[${fieldIdForLog}] Processing field. Type: ${field.type}`);
 
-      // Construct the generic wrapper selector using the field.id
-      const fieldWrapperSelector = `[data-testid="${FIELD_WRAPPER_TESTID_PREFIX}${field.id}"]`;
-      const fieldWrapper = document.querySelector(fieldWrapperSelector);
+      const outerFieldWrapperSelector = `[data-testid="${OUTER_FIELD_WRAPPER_TESTID_PREFIX}${field.id}"]`;
+      const outerFieldWrapper = document.querySelector(
+        outerFieldWrapperSelector
+      );
 
-      if (fieldWrapper) {
+      if (outerFieldWrapper) {
         logger.log(
-          `[${fieldIdForLog}] Found field wrapper using selector: ${fieldWrapperSelector}`,
-          fieldWrapper
+          `[${fieldIdForLog}] Found OUTER field wrapper:`,
+          outerFieldWrapper
         );
 
-        // Now, try to find the actual input element or RTE area within this wrapper
-        // Attempt 1: Look for a Rich Text Editor area
-        const rteArea = findRichTextEditableArea(fieldWrapper);
-        if (rteArea) {
-          targetElement = rteArea;
+        // Step 1: Check if it's an RTE by looking for the INNER_RTE_WRAPPER_SELECTOR
+        // and then the editable area within that.
+        const rteAreaViaInnerWrapper =
+          findRichTextEditableArea(outerFieldWrapper); // findRichTextEditableArea now checks for INNER_RTE_WRAPPER_SELECTOR first
+
+        if (rteAreaViaInnerWrapper) {
+          targetElement = rteAreaViaInnerWrapper;
           isRichText = true;
           logger.log(
-            `[${fieldIdForLog}] Found RTE area inside wrapper:`,
+            `[${fieldIdForLog}] Determined as RICH TEXT field. Target:`,
             targetElement
           );
         } else {
-          // Attempt 2: Look for a standard input or textarea within the wrapper
-          // Common input/textarea selectors, or one with an ID matching field.id
+          // Step 2: If not a clear RTE (no inner RTE wrapper or specific RTE element found directly),
+          // look for standard input/textarea within the outer wrapper.
           targetElement =
-            fieldWrapper.querySelector(
+            outerFieldWrapper.querySelector(
               `input[id="${field.id}"], textarea[id="${field.id}"]`
             ) ||
-            fieldWrapper.querySelector(
+            outerFieldWrapper.querySelector(
               `input[name="${field.id}"], textarea[name="${field.id}"]`
             ) ||
-            fieldWrapper.querySelector('input[type="text"], textarea'); // More generic fallback within wrapper
+            outerFieldWrapper.querySelector(
+              'input[type="text"], textarea, input:not([type]), div[contenteditable="true"]:not([role="textbox"])'
+            ); // Added generic CE not already an RTE
 
           if (targetElement) {
-            isRichText = false; // It's a standard input/textarea
-            logger.log(
-              `[${fieldIdForLog}] Found standard input/textarea inside wrapper:`,
-              targetElement
-            );
-          } else {
-            // Attempt 3: Check if the wrapper itself is a generic contentEditable (less common for this pattern)
+            isRichText = false; // Assume standard text or generic contenteditable
+            // If it's a generic contenteditable, double-check it's not accidentally an RTE that findRichTextEditableArea missed
             if (
-              fieldWrapper.isContentEditable &&
-              !findRichTextEditableArea(fieldWrapper)
+              targetElement.isContentEditable &&
+              findRichTextEditableArea(targetElement)
             ) {
-              // Ensure it's not already identified as RTE
-              targetElement = fieldWrapper;
-              isRichText = false; // Treat as generic contentEditable
+              isRichText = true;
               logger.log(
-                `[${fieldIdForLog}] Wrapper itself is a generic contentEditable:`,
+                `[${fieldIdForLog}] Found GENERIC CONTENTEDITABLE that is ALSO an RTE inside outer wrapper:`,
                 targetElement
               );
             } else {
-              logger.warn(
-                `[${fieldIdForLog}] Wrapper found, but no specific input/RTE area identified within.`
+              logger.log(
+                `[${fieldIdForLog}] Determined as STANDARD TEXT/GENERIC CE field. Target:`,
+                targetElement
               );
             }
+          } else {
+            logger.warn(
+              `[${fieldIdForLog}] OUTER wrapper found, but no recognized input/RTE area inside.`
+            );
           }
         }
       } else {
         logger.warn(
-          `[${fieldIdForLog}] Field wrapper NOT found using selector: ${fieldWrapperSelector}. Trying direct ID/Name.`
+          `[${fieldIdForLog}] OUTER field wrapper NOT found using selector: ${outerFieldWrapperSelector}.`
         );
-        // Fallback to direct ID/Name if wrapper not found (less ideal but a safety net)
-        const directTarget =
-          document.getElementById(field.id) ||
-          document.querySelector(`[name="${field.id}"]`);
-        if (directTarget) {
-          logger.log(
-            `[${fieldIdForLog}] Fallback: Found direct target by ID/Name:`,
-            directTarget
-          );
-          if (
-            directTarget.value !== undefined &&
-            typeof directTarget.value === 'string' &&
-            !directTarget.isContentEditable
-          ) {
-            targetElement = directTarget;
-            isRichText = false;
-          } else if (directTarget.isContentEditable) {
-            const rteArea = findRichTextEditableArea(directTarget);
-            if (rteArea) {
-              targetElement = rteArea;
-              isRichText = true;
-            } else {
-              targetElement = directTarget;
-              isRichText = false;
-            }
-          }
-        }
+        // Optional: Fallback to direct ID/Name if outer wrapper pattern fails for some fields
+        // const directTarget = document.getElementById(field.id) || document.querySelector(`[name="${field.id}"]`);
+        // if (directTarget) { /* ... handle directTarget ... */ }
       }
 
       if (!targetElement) {
@@ -346,13 +333,7 @@
         continue;
       }
 
-      logger.log(
-        `[${fieldIdForLog}] Final target determined:`,
-        targetElement,
-        `isRichText: ${isRichText}`
-      );
-
-      // --- Apply Injection (no changes to this section itself, only to how targetElement/isRichText are set) ---
+      // --- Apply Injection ---
       if (isRichText) {
         const injectRTEContent = () => {
           logger.log('✍️', `Injecting into rich text editor: ${fieldIdForLog}`);
@@ -413,7 +394,7 @@
         targetElement.value !== undefined &&
         typeof targetElement.value === 'string'
       ) {
-        // Standard text input/textarea
+        // Standard text
         if (targetElement.value.trim() === '') {
           targetElement.value = field.value;
           triggerInputEvent(targetElement);
@@ -428,7 +409,7 @@
           );
         }
       } else if (targetElement.isContentEditable) {
-        // Generic contentEditable
+        // Generic contentEditable (not identified as full RTE by findRichTextEditableArea)
         if (targetElement.textContent.trim() === '') {
           targetElement.textContent = field.value;
           triggerInputEvent(targetElement);
@@ -442,10 +423,7 @@
             `Generic contentEditable: ${fieldIdForLog} already has content, skipped.`
           );
         }
-      }
-      // Remove the old 'select' placeholder as current script only handles 'text'
-      // else if (field.type === 'select') { /* ... */ }
-      else {
+      } else {
         logger.warn(
           '🤷',
           `Field: "${fieldIdForLog}" (type: ${field.type}) found, but no specific injection logic matched.`
@@ -459,23 +437,19 @@
     logger.log('🏁', 'Finished applying template fields.');
   }
 
-  // --- Core Logic (loadAndApplyTemplate, onModalContextChange, observeSelectors, modalObserver) ---
-  // ... (No changes to these core functions from your last provided script, ensure they are correct) ...
+  // --- Core Logic (loadAndApplyTemplate, onModalContextChange, observeSelectors, modalObserver - no changes from your previous version) ---
   async function loadAndApplyTemplate() {
     const currentProjectText = getSelectedValueFromPicker(PROJECT_SELECTOR_ID);
     const currentIssueTypeText = getSelectedValueFromPicker(
       ISSUE_TYPE_SELECTOR_ID
     );
-
     const pk = extractProjectKey(currentProjectText);
     const it = formatIssueType(currentIssueTypeText);
-
     logger.log(
       'ℹ️',
       `Context: Project Text="${currentProjectText}", Issue Type Text="${currentIssueTypeText}"`
     );
     logger.log('🔑', `Extracted: Project Key=${pk}, Issue Type=${it}`);
-
     if (!pk || !it) {
       logger.warn(
         '❌',
@@ -485,9 +459,7 @@
       lastAttemptedSignature = `project-${pk}_issueType-${it}`;
       return;
     }
-
     const currentSignature = `${pk}_${it}`;
-
     if (lastAttemptedSignature === currentSignature) {
       if (currentTemplateData) {
         logger.log(
@@ -503,7 +475,6 @@
       }
       return;
     }
-
     logger.log(
       '⏳',
       `New signature: ${currentSignature}. Resetting state and fetching template.`
@@ -511,12 +482,10 @@
     lastAttemptedSignature = currentSignature;
     currentTemplateData = null;
     const templateUrl = buildTemplateUrl(pk, it);
-
     if (!templateUrl) {
       logger.warn('❌', 'Could not build template URL for new signature.');
       return;
     }
-
     logger.log(
       '📦',
       `Loading template for ${currentSignature} from ${templateUrl}`
@@ -552,7 +521,6 @@
   function observeSelectors() {
     const projectSelector = document.getElementById(PROJECT_SELECTOR_ID);
     const issueTypeSelector = document.getElementById(ISSUE_TYPE_SELECTOR_ID);
-
     if (!projectSelector || !issueTypeSelector) {
       logger.error(
         '❌',
@@ -560,7 +528,6 @@
       );
       return;
     }
-
     logger.log('🔍', 'Observing project/issue type selectors...');
     const observerConfig = {
       childList: true,
@@ -576,7 +543,6 @@
     const issueTypeValueContainer = issueTypeSelector.querySelector(
       '.single-select__value-container, [class*="singleValue"]'
     );
-
     if (projectValueContainer)
       projectObserver.observe(projectValueContainer, observerConfig);
     else {
@@ -585,7 +551,6 @@
       );
       projectObserver.observe(projectSelector, observerConfig);
     }
-
     if (issueTypeValueContainer)
       issueTypeObserver.observe(issueTypeValueContainer, observerConfig);
     else {
@@ -594,7 +559,6 @@
       );
       issueTypeObserver.observe(issueTypeSelector, observerConfig);
     }
-
     logger.log(
       '🚀',
       'Initial call to loadAndApplyTemplate from observeSelectors.'
@@ -629,7 +593,6 @@
       }
     }
   });
-
   modalObserver.observe(document.body, { childList: true, subtree: true });
   logger.log('👀', 'Observing document body for create modal...');
 })();
