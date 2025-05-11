@@ -9,11 +9,6 @@
       "id": "summary",
       "value": "US: ",
       "type": "text"
-    },
-    {
-      "id": "priority-field",
-      "value": "P1",
-      "type": "select"
     }
   ]
 }
