@@ -1,13 +1,18 @@
 {
   "fields": [
     {
-      "id": "description",
-      "value": "As a [Role],\nI want [Action],\nSo that [Benefit].\n\nAcceptance Criteria:\n- Criterion 1\n- Criterion 2\n\nTechnical Notes:\n- ",
+      "id": "summary",
+      "value": "As a [Role], I want [Action]",
       "type": "text"
     },
     {
-      "id": "summary",
-      "value": "US: ",
+      "id": "description",
+      "value": "**As a** [Role],\n**I want** [Action],\n**So that** [Benefit].\n\nAcceptance Criteria:\n- Criterion 1\n- Criterion 2\n\nTechnical Notes:\n- ",
+      "type": "text"
+    },
+    {
+      "id": "customfield_10229",
+      "value": "[] Criteria\n- [] Criteria\n- [] Criteria",
       "type": "text"
     }
   ]
