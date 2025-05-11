@@ -7,7 +7,7 @@
     },
     {
       "id": "description",
-      "value": "**As a** [Role],\n**I want** [Action],\n**So that** [Benefit].\n\nAcceptance Criteria:\n- Criterion 1\n- Criterion 2\n\nTechnical Notes:\n- ",
+      "value": "**As a** [Role],\n**I want** [Action],\n**So that** [Benefit].",
       "type": "text"
     },
     {
