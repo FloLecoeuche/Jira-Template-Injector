@@ -12,10 +12,8 @@
   const ISSUE_TYPE_SELECTOR_ID =
     'issue-create.ui.modal.create-form.type-picker.issue-type-select';
 
-  // Generic prefix for the OUTER field wrapper data-testids
   const OUTER_FIELD_WRAPPER_TESTID_PREFIX =
     'issue-create.ui.modal.create-form.layout-renderer.field-renderer.field.';
-  // Specific data-testid for the INNER wrapper OF a rich text editor
   const INNER_RTE_WRAPPER_SELECTOR = `[data-testid="issue-create.common.ui.fields.description-field.wrapper"]`;
 
   const RICH_TEXT_EDITABLE_AREA_SELECTORS = [
@@ -57,6 +55,7 @@
       return Promise.resolve('keep');
     }
     isConfirmationModalOpen = true;
+    // ... (rest of your showConfirmationModal implementation from previous version)
     return new Promise((resolve) => {
       const modalId = 'jti-confirmation-modal';
       const existingModal = document.getElementById(modalId);
@@ -121,9 +120,9 @@
     });
   }
 
-  // --- Helper Functions ---
+  // --- Helper Functions (no changes to these from previous version) ---
   function getSelectedValueFromPicker(selectorId) {
-    /* ... (no change) ... */
+    /* ... */
     const picker = document.getElementById(selectorId);
     if (picker) {
       const valueContainer = picker.querySelector(
@@ -137,7 +136,7 @@
     return null;
   }
   function extractProjectKey(projectText) {
-    /* ... (no change) ... */
+    /* ... */
     if (!projectText) return null;
     const match = projectText.match(/\(([^)]+)\)$/);
     if (match && match[1]) return match[1].toUpperCase();
@@ -147,18 +146,18 @@
     return projectText.split(' ')[0].toUpperCase();
   }
   function formatIssueType(issueTypeText) {
-    /* ... (no change) ... */
+    /* ... */
     if (!issueTypeText) return null;
     return issueTypeText.toUpperCase().replace(/\s+/g, '-');
   }
   function buildTemplateUrl(projKey, issType) {
-    /* ... (no change) ... */
+    /* ... */
     if (!projKey || !issType) return null;
     const fileName = `${projKey}_${issType}.json`;
     return `https://raw.githubusercontent.com/${GITHUB_USERNAME}/${GITHUB_REPONAME}/${GITHUB_BRANCH}/templates/${fileName}`;
   }
   function triggerInputEvent(element) {
-    /* ... (no change) ... */
+    /* ... */
     const eventInput = new Event('input', { bubbles: true, cancelable: true });
     const eventChange = new Event('change', {
       bubbles: true,
@@ -167,29 +166,24 @@
     element.dispatchEvent(eventInput);
     element.dispatchEvent(eventChange);
   }
-
   function findRichTextEditableArea(containerElement) {
+    /* ... (use your last working version) ... */
     if (!containerElement) return null;
-    // First, look for the known inner RTE wrapper if this container is supposed to hold an RTE
     const innerRTEWrapper = containerElement.querySelector(
       INNER_RTE_WRAPPER_SELECTOR
     );
-    const searchBase = innerRTEWrapper || containerElement; // Search within inner wrapper if found, else the provided container
-
+    const searchBase = innerRTEWrapper || containerElement;
     for (const selector of RICH_TEXT_EDITABLE_AREA_SELECTORS) {
       const editableArea = searchBase.querySelector(selector);
       if (editableArea) return editableArea;
     }
-    // Fallback: If no specific selectors match within searchBase,
-    // check if searchBase itself is the editable area (less likely if using wrappers)
     if (searchBase.matches('[contenteditable="true"][role="textbox"]')) {
       return searchBase;
     }
     return null;
   }
-
   function isRichTextEditorEmpty(editorElement) {
-    /* ... (no change) ... */
+    /* ... (use your last working version) ... */
     if (!editorElement) return true;
     const placeholderNode = editorElement.querySelector(
       RICH_TEXT_PLACEHOLDER_SELECTOR
@@ -233,9 +227,10 @@
     }
     logger.log('🧠', 'Applying template to fields...', template);
 
+    const injectedSimpleTextFields = new Map(); // Store { fieldId: { target, value } } for simple fields
+
     for (const field of template.fields) {
       if (field.type !== 'text') {
-        // Assuming only 'text' type for now
         logger.warn(
           '🧐',
           `Unsupported field type "${field.type}" for field ID: ${field.id}. Skipping.`
@@ -249,7 +244,6 @@
       let targetElement = null;
       let isRichText = false;
       const fieldIdForLog = field.displayName || field.id;
-
       logger.log(`[${fieldIdForLog}] Processing field. Type: ${field.type}`);
 
       const outerFieldWrapperSelector = `[data-testid="${OUTER_FIELD_WRAPPER_TESTID_PREFIX}${field.id}"]`;
@@ -262,12 +256,8 @@
           `[${fieldIdForLog}] Found OUTER field wrapper:`,
           outerFieldWrapper
         );
-
-        // Step 1: Check if it's an RTE by looking for the INNER_RTE_WRAPPER_SELECTOR
-        // and then the editable area within that.
         const rteAreaViaInnerWrapper =
-          findRichTextEditableArea(outerFieldWrapper); // findRichTextEditableArea now checks for INNER_RTE_WRAPPER_SELECTOR first
-
+          findRichTextEditableArea(outerFieldWrapper);
         if (rteAreaViaInnerWrapper) {
           targetElement = rteAreaViaInnerWrapper;
           isRichText = true;
@@ -276,8 +266,6 @@
             targetElement
           );
         } else {
-          // Step 2: If not a clear RTE (no inner RTE wrapper or specific RTE element found directly),
-          // look for standard input/textarea within the outer wrapper.
           targetElement =
             outerFieldWrapper.querySelector(
               `input[id="${field.id}"], textarea[id="${field.id}"]`
@@ -287,26 +275,19 @@
             ) ||
             outerFieldWrapper.querySelector(
               'input[type="text"], textarea, input:not([type]), div[contenteditable="true"]:not([role="textbox"])'
-            ); // Added generic CE not already an RTE
-
+            );
           if (targetElement) {
-            isRichText = false; // Assume standard text or generic contenteditable
-            // If it's a generic contenteditable, double-check it's not accidentally an RTE that findRichTextEditableArea missed
+            isRichText = false;
             if (
               targetElement.isContentEditable &&
               findRichTextEditableArea(targetElement)
             ) {
-              isRichText = true;
-              logger.log(
-                `[${fieldIdForLog}] Found GENERIC CONTENTEDITABLE that is ALSO an RTE inside outer wrapper:`,
-                targetElement
-              );
-            } else {
-              logger.log(
-                `[${fieldIdForLog}] Determined as STANDARD TEXT/GENERIC CE field. Target:`,
-                targetElement
-              );
+              isRichText = true; // It was a generic CE that's also an RTE
             }
+            logger.log(
+              `[${fieldIdForLog}] Determined as STANDARD TEXT/GENERIC CE field. Target:`,
+              targetElement
+            );
           } else {
             logger.warn(
               `[${fieldIdForLog}] OUTER wrapper found, but no recognized input/RTE area inside.`
@@ -317,9 +298,7 @@
         logger.warn(
           `[${fieldIdForLog}] OUTER field wrapper NOT found using selector: ${outerFieldWrapperSelector}.`
         );
-        // Optional: Fallback to direct ID/Name if outer wrapper pattern fails for some fields
-        // const directTarget = document.getElementById(field.id) || document.querySelector(`[name="${field.id}"]`);
-        // if (directTarget) { /* ... handle directTarget ... */ }
+        // Optional: Fallback to direct ID/Name if needed for some fields
       }
 
       if (!targetElement) {
@@ -394,7 +373,7 @@
         targetElement.value !== undefined &&
         typeof targetElement.value === 'string'
       ) {
-        // Standard text
+        // Standard text input/textarea
         if (targetElement.value.trim() === '') {
           targetElement.value = field.value;
           triggerInputEvent(targetElement);
@@ -402,6 +381,11 @@
             '✍️',
             `Injected into standard input/textarea: ${fieldIdForLog}`
           );
+          injectedSimpleTextFields.set(field.id, {
+            target: targetElement,
+            value: field.value,
+            type: 'input',
+          });
         } else {
           logger.log(
             '🤔',
@@ -409,7 +393,7 @@
           );
         }
       } else if (targetElement.isContentEditable) {
-        // Generic contentEditable (not identified as full RTE by findRichTextEditableArea)
+        // Generic contentEditable (not an RTE)
         if (targetElement.textContent.trim() === '') {
           targetElement.textContent = field.value;
           triggerInputEvent(targetElement);
@@ -417,6 +401,11 @@
             '✍️',
             `Injected into generic contentEditable: ${fieldIdForLog}`
           );
+          injectedSimpleTextFields.set(field.id, {
+            target: targetElement,
+            value: field.value,
+            type: 'contentEditable',
+          });
         } else {
           logger.log(
             '🤔',
@@ -433,7 +422,53 @@
       await new Promise((resolve) =>
         setTimeout(resolve, FIELD_PROCESS_DELAY_MS)
       );
+    } // End of for...of loop for fields
+
+    // --- Post-injection re-check for simple text fields that might have been cleared ---
+    if (injectedSimpleTextFields.size > 0) {
+      logger.log(
+        '🛡️',
+        'Performing post-injection check for simple text fields...'
+      );
+      for (const [fieldId, data] of injectedSimpleTextFields) {
+        const { target, value: injectedValue, type } = data;
+        let currentValue = '';
+        if (type === 'input') {
+          currentValue = target.value;
+        } else if (type === 'contentEditable') {
+          currentValue = target.textContent;
+        }
+
+        if (currentValue.trim() !== injectedValue.trim()) {
+          // Check if it's truly empty now but was supposed to have the injectedValue
+          if (currentValue.trim() === '' && injectedValue.trim() !== '') {
+            logger.warn(
+              '🛡️',
+              `Simple text field "${fieldId}" appears to have been cleared. Re-injecting: "${injectedValue}"`
+            );
+            if (type === 'input') {
+              target.value = injectedValue;
+            } else if (type === 'contentEditable') {
+              target.textContent = injectedValue;
+            }
+            triggerInputEvent(target);
+          } else if (injectedValue.trim() !== '') {
+            // Only re-inject if there was something to inject and it changed
+            logger.warn(
+              '🛡️',
+              `Simple text field "${fieldId}" content changed. Re-injecting: "${injectedValue}" (Current: "${currentValue}")`
+            );
+            if (type === 'input') {
+              target.value = injectedValue;
+            } else if (type === 'contentEditable') {
+              target.textContent = injectedValue;
+            }
+            triggerInputEvent(target);
+          }
+        }
+      }
     }
+
     logger.log('🏁', 'Finished applying template fields.');
   }
 
