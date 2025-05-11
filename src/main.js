@@ -15,11 +15,13 @@
     'issue-create.ui.modal.create-form.project-picker.project-select';
   const ISSUE_TYPE_SELECTOR_ID =
     'issue-create.ui.modal.create-form.type-picker.issue-type-select';
-  // Selectors for detecting rich text editors (e.g., ProseMirror)
-  const RICH_TEXT_EDITOR_SELECTORS = [
-    '.ProseMirror[role="textbox"][contenteditable="true"]',
-    '#ak-editor-textarea[contenteditable="true"]', // Often specific to Jira's editor
-    'div[data-testid*="rich-text"][contenteditable="true"]', // More generic testid
+
+  // Selectors for identifying the actual editable area of a rich text editor
+  const RICH_TEXT_EDITABLE_AREA_SELECTORS = [
+    '.ProseMirror[role="textbox"][contenteditable="true"]', // Common for ProseMirror
+    '#ak-editor-textarea[contenteditable="true"]', // Specific Jira ID for ProseMirror
+    'div[aria-label*="Main content area"][contenteditable="true"]', // Another common pattern
+    'div.ak-editor-content-area div[contenteditable="true"]', // More general Atlassian editor structure
   ];
   const RICH_TEXT_PLACEHOLDER_SELECTOR =
     'span[data-testid="placeholder-test-id"].placeholder-decoration';
@@ -88,32 +90,37 @@
     element.dispatchEvent(eventChange);
   }
 
-  function isRichTextEditor(element) {
-    if (!element || !element.matches) return false;
-    for (const selector of RICH_TEXT_EDITOR_SELECTORS) {
-      if (element.matches(selector)) {
-        return true;
+  function findRichTextEditableArea(containerElement) {
+    if (!containerElement) return null;
+    for (const selector of RICH_TEXT_EDITABLE_AREA_SELECTORS) {
+      const editableArea = containerElement.querySelector(selector);
+      if (editableArea) {
+        return editableArea;
       }
     }
-    // Fallback: if it's a div, contenteditable, and has a role of textbox, good chance it's an RTE
-    if (
-      element.tagName === 'DIV' &&
-      element.isContentEditable &&
-      element.getAttribute('role') === 'textbox'
-    ) {
-      return true;
+    // Broader check if container itself is contenteditable and looks like an editor
+    if (containerElement.matches('[contenteditable="true"][role="textbox"]')) {
+      return containerElement;
     }
-    return false;
+    return null;
   }
 
   function isRichTextEditorEmpty(editorElement) {
-    if (!editorElement) return true; // If no element, consider it "empty" for safety
+    if (!editorElement) return true;
 
     const placeholderNode = editorElement.querySelector(
       RICH_TEXT_PLACEHOLDER_SELECTOR
     );
-    if (placeholderNode && editorElement.contains(placeholderNode)) {
-      logger.log('ℹ️', `Rich text editor has placeholder, considering empty.`);
+    if (
+      placeholderNode &&
+      editorElement.contains(placeholderNode) &&
+      placeholderNode.offsetParent !== null
+    ) {
+      // Check visibility
+      logger.log(
+        'ℹ️',
+        `Rich text editor has visible placeholder, considering empty.`
+      );
       return true;
     }
     if (editorElement.textContent.trim() === '') {
@@ -124,18 +131,15 @@
       return true;
     }
 
-    // Check for a single, effectively empty paragraph
     const allParagraphs = editorElement.querySelectorAll('p');
     if (allParagraphs.length === 1) {
       const pContent = allParagraphs[0].innerHTML.trim().toLowerCase();
-      // Check for common empty paragraph structures
       if (
         pContent === '' ||
         pContent === '<br>' ||
         pContent.includes('prosemirror-trailingbreak') ||
         pContent === ' '
       ) {
-        // Ensure no other significant content like images, tables, lists exists
         if (
           editorElement.querySelectorAll(
             'img, table, ul, ol, pre, blockquote, hr, li'
@@ -149,7 +153,7 @@
         }
       }
     }
-    return false; // If none of the above, assume it has content
+    return false;
   }
 
   async function injectTemplate(templateData) {
@@ -169,48 +173,178 @@
           '🧐',
           `Unsupported field type "${field.type}" for field ID: ${field.id}. Skipping.`
         );
-        return; // continue to next field
+        return;
       }
 
-      let targetElement =
+      let targetElement = null;
+      let isRichText = false;
+
+      // Attempt 1: Direct ID or Name (mostly for simple fields)
+      const directTarget =
         document.getElementById(field.id) ||
         document.querySelector(`[name="${field.id}"]`);
 
-      if (!targetElement) {
-        // Special case: some rich text editors might not have a simple id/name on the main editable div,
-        // but rather on a wrapper. Let's try to find a rich text editor within the field's general area
-        // if the primary targetElement isn't found or isn't suitable.
-        // This is heuristic and might need refinement based on Jira's structure.
-        const fieldWrapper = document.querySelector(
-          `[data-testid*="${field.id}"], [aria-labelledby*="${field.id}"]`
-        );
+      if (directTarget) {
+        if (
+          directTarget.value !== undefined &&
+          typeof directTarget.value === 'string' &&
+          !directTarget.isContentEditable
+        ) {
+          targetElement = directTarget;
+          isRichText = false;
+          logger.log(
+            'ℹ️',
+            `Found standard input/textarea by ID/Name for "${field.id}".`
+          );
+        } else if (directTarget.isContentEditable) {
+          // It's contenteditable, check if it's a rich text editor itself
+          const rteArea = findRichTextEditableArea(directTarget);
+          if (rteArea) {
+            targetElement = rteArea;
+            isRichText = true;
+            logger.log(
+              'ℹ️',
+              `Found rich text editor by ID/Name (or it is the editor itself) for "${field.id}".`
+            );
+          } else {
+            // Generic contenteditable found by ID/Name, but not matching specific RTE selectors
+            targetElement = directTarget;
+            isRichText = false; // Treat as generic contenteditable
+            logger.log(
+              'ℹ️',
+              `Found generic contenteditable by ID/Name for "${field.id}".`
+            );
+          }
+        }
+      }
+
+      // Attempt 2: Find by data-testid wrapper, then find RTE within it (more robust for complex fields)
+      if (
+        !targetElement ||
+        (targetElement &&
+          !isRichText &&
+          field.id.toLowerCase().includes('description'))
+      ) {
+        // Prioritize this for "description" or similar
+        // Construct a selector for the wrapper using the field.id
+        // Example: if field.id is "description", look for data-testid containing "description-field.wrapper"
+        // This requires field.id in template to be somewhat predictive or match a convention
+        const wrapperSelector = `[data-testid*="${field.id}-field.wrapper"], [data-testid*="${field.id}.wrapper"]`;
+        const fieldWrapper = document.querySelector(wrapperSelector);
+
         if (fieldWrapper) {
-          for (const selector of RICH_TEXT_EDITOR_SELECTORS) {
-            const rteInWrapper = fieldWrapper.querySelector(selector);
-            if (rteInWrapper) {
-              targetElement = rteInWrapper;
-              logger.log(
-                'ℹ️',
-                `Found rich text editor for "${field.id}" within a wrapper.`
-              );
-              break;
+          logger.log(
+            'ℹ️',
+            `Found wrapper for "${field.id}" using selector: ${wrapperSelector}`
+          );
+          const rteArea = findRichTextEditableArea(fieldWrapper);
+          if (rteArea) {
+            targetElement = rteArea;
+            isRichText = true;
+            logger.log(
+              'ℹ️',
+              `Found rich text editor inside wrapper for "${field.id}".`
+            );
+          } else {
+            logger.warn(
+              '⚠️',
+              `Found wrapper for "${field.id}", but no recognized rich text editor area inside.`
+            );
+            // If directTarget was a generic contenteditable, keep it.
+            if (
+              directTarget &&
+              directTarget.isContentEditable &&
+              !targetElement
+            ) {
+              targetElement = directTarget;
+              isRichText = false; // It's a generic contenteditable, not a full RTE
             }
+          }
+        } else if (
+          directTarget &&
+          directTarget.isContentEditable &&
+          !isRichText &&
+          !targetElement
+        ) {
+          // If wrapper not found, but directTarget was a generic contenteditable, use that.
+          targetElement = directTarget;
+          isRichText = false; // Still generic contenteditable
+        }
+      }
+
+      // If still no target, and it's likely description based on ID, try broader search inside common parents
+      if (!targetElement && field.id.toLowerCase().includes('description')) {
+        const commonDescriptionParent = document.querySelector(
+          'form#issue-create\\.ui\\.modal\\.create-form div[data-testid*="description"]'
+        );
+        if (commonDescriptionParent) {
+          const rteArea = findRichTextEditableArea(commonDescriptionParent);
+          if (rteArea) {
+            targetElement = rteArea;
+            isRichText = true;
+            logger.log(
+              'ℹ️',
+              `Found description rich text editor via common parent heuristic.`
+            );
           }
         }
       }
 
       if (!targetElement) {
-        logger.warn('🤷', `Field target for ID/Name: "${field.id}" not found.`);
-        return; // continue to next field
+        logger.warn(
+          '🤷',
+          `Field target for ID/Name: "${field.id}" not found after all attempts.`
+        );
+        return;
       }
 
-      // Determine injection strategy
-      if (
+      // --- Apply Injection ---
+      if (isRichText) {
+        if (!isRichTextEditorEmpty(targetElement)) {
+          logger.log(
+            '🤔',
+            `Rich text editor: ${field.id} already has content, skipped.`
+          );
+          return;
+        }
+        logger.log(
+          '✍️',
+          `Attempting injection into rich text editor: ${field.id}`
+        );
+        const paragraphs = field.value.split('\n');
+        let newHtml = '';
+        paragraphs.forEach((paraText, index) => {
+          const isLastParagraph = index === paragraphs.length - 1;
+          if (paraText.trim() === '') {
+            newHtml += `<p><br class="ProseMirror-trailingBreak"></p>`;
+          } else {
+            const escapedPara = paraText
+              .replace(/&/g, '&')
+              .replace(/</g, '<')
+              .replace(/>/g, '>');
+            newHtml += `<p>${escapedPara}${
+              isLastParagraph ? '<br class="ProseMirror-trailingBreak">' : ''
+            }</p>`;
+          }
+        });
+        // Ensure there's at least one paragraph with a trailing break if template value is empty
+        if (field.value.trim() === '') {
+          newHtml = '<p><br class="ProseMirror-trailingBreak"></p>';
+        }
+
+        targetElement.innerHTML = newHtml;
+        targetElement.focus();
+        triggerInputEvent(targetElement);
+        setTimeout(() => targetElement.blur(), 100); // Slightly longer delay for blur
+        logger.log(
+          '✅',
+          `Successfully attempted injection into rich text editor: ${field.id}`
+        );
+      } else if (
         targetElement.value !== undefined &&
-        typeof targetElement.value === 'string' &&
-        !targetElement.isContentEditable
+        typeof targetElement.value === 'string'
       ) {
-        // --- Standard <input> or <textarea> Handling (not contentEditable) ---
+        // Standard <input> or <textarea> (not contentEditable, or generic contentEditable treated as simple input)
         if (targetElement.value.trim() === '') {
           targetElement.value = field.value;
           triggerInputEvent(targetElement);
@@ -224,68 +358,10 @@
             `Standard input/textarea: ${field.id} already has content, skipped.`
           );
         }
-      } else if (isRichTextEditor(targetElement)) {
-        // --- Rich Text Editor Handling (e.g., ProseMirror) ---
-        if (!isRichTextEditorEmpty(targetElement)) {
-          logger.log(
-            '🤔',
-            `Rich text editor: ${field.id} already has content, skipped.`
-          );
-          return;
-        }
-
-        logger.log(
-          '✍️',
-          `Attempting injection into rich text editor: ${field.id}`
-        );
-        const paragraphs = field.value.split('\n');
-        let newHtml = '';
-        if (
-          paragraphs.length === 0 ||
-          (paragraphs.length === 1 && paragraphs[0].trim() === '')
-        ) {
-          newHtml = '<p><br class="ProseMirror-trailingBreak"></p>'; // Ensure a trailingBreak for some editors
-        } else {
-          paragraphs.forEach((paraText) => {
-            if (paraText.trim() === '') {
-              newHtml += '<p><br class="ProseMirror-trailingBreak"></p>';
-            } else {
-              const escapedPara = paraText
-                .replace(/&/g, '&')
-                .replace(/</g, '<')
-                .replace(/>/g, '>');
-              newHtml += `<p>${escapedPara}</p>`;
-            }
-          });
-        }
-        // Ensure the last paragraph also has a trailing break if it's the common pattern
-        if (
-          newHtml.endsWith('</p>') &&
-          !newHtml.endsWith('<br class="ProseMirror-trailingBreak"></p>')
-        ) {
-          const lastPIndex = newHtml.lastIndexOf('</p>');
-          newHtml =
-            newHtml.substring(0, lastPIndex) +
-            '<br class="ProseMirror-trailingBreak"></p>';
-        }
-
-        targetElement.innerHTML = newHtml;
-
-        targetElement.focus();
-        triggerInputEvent(targetElement);
-        // A small delay before blur can sometimes help ensure events propagate
-        setTimeout(() => targetElement.blur(), 50);
-        logger.log(
-          '✅',
-          `Successfully attempted injection into rich text editor: ${field.id}`
-        );
       } else if (targetElement.isContentEditable) {
-        // --- Generic contentEditable div (fallback) ---
+        // Generic contentEditable div (fallback, if not identified as RTE or standard input)
         if (targetElement.textContent.trim() === '') {
-          // For simple contentEditable, textContent is often fine.
-          // For multi-line, we might want to insert <p> or <br> but it's less predictable
-          // than with known rich editors.
-          targetElement.textContent = field.value; // Simpler injection for generic contentEditable
+          targetElement.textContent = field.value;
           triggerInputEvent(targetElement);
           logger.log(
             '✍️',
@@ -357,7 +433,7 @@
       if (response.ok) {
         const templateData = await response.json();
         logger.log('✅', 'Template loaded:', templateData);
-        await injectTemplate(templateData);
+        await injectTemplate(templateData); // injectTemplate is now async implicitly
         lastInjectedSignature = currentSignature;
       } else if (response.status === 404) {
         logger.warn(
@@ -405,7 +481,7 @@
           mutation.type === 'characterData'
         ) {
           logger.log(logMessage, `${type} changed/detected.`);
-          lastInjectedSignature = null; // Allow re-injection
+          lastInjectedSignature = null;
           loadAndApplyTemplate();
           return;
         }
@@ -434,7 +510,7 @@
       issueTypeObserver.observe(issueTypeValueContainer, observerConfig);
     else issueTypeObserver.observe(issueTypeSelector, observerConfig);
 
-    loadAndApplyTemplate(); // Initial call
+    loadAndApplyTemplate();
   }
 
   const modalObserver = new MutationObserver((mutationsList, observer) => {
@@ -445,7 +521,7 @@
           logger.log('✅', 'Form is present:', CREATE_MODAL_ID);
           createForm.dataset.jtiObserved = 'true';
           lastInjectedSignature = null;
-          setTimeout(observeSelectors, 500);
+          setTimeout(observeSelectors, 700); // Slightly increased delay for complex forms to fully render
         } else if (
           !createForm &&
           document.querySelector(`[data-jti-observed="true"]`)
