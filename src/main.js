@@ -24,14 +24,14 @@
   ];
   const RICH_TEXT_PLACEHOLDER_SELECTOR =
     'span[data-testid="placeholder-test-id"].placeholder-decoration';
-  const FIELD_PROCESS_DELAY_MS = 50; // Delay between processing each field
-  const RTE_LINE_TYPING_DELAY_MS = 30; // Delay between "typing" each line in an RTE
+  const FIELD_PROCESS_DELAY_MS = 200;
 
   let currentTemplateData = null;
   let lastAttemptedSignature = null;
   let isConfirmationModalOpen = false;
 
   const logger = {
+    /* ... (no change) ... */
     log: (emoji, ...args) => console.log(`[${LOG_PREFIX}] ${emoji}`, ...args),
     error: (emoji, ...args) =>
       console.error(`[${LOG_PREFIX}] ${emoji}`, ...args),
@@ -44,7 +44,7 @@
     `Config: User=${GITHUB_USERNAME}, Repo=${GITHUB_REPONAME}, Branch=${GITHUB_BRANCH}`
   );
 
-  // --- Modal Utility (showConfirmationModal - no changes from your last working version) ---
+  // --- Modal Utility (showConfirmationModal - no changes) ---
   function showConfirmationModal(fieldName, onInject, onKeep) {
     if (isConfirmationModalOpen) {
       logger.warn(
@@ -55,6 +55,7 @@
       return Promise.resolve('keep');
     }
     isConfirmationModalOpen = true;
+    // ... (rest of your showConfirmationModal implementation from previous version)
     return new Promise((resolve) => {
       const modalId = 'jti-confirmation-modal';
       const existingModal = document.getElementById(modalId);
@@ -157,18 +158,13 @@
   }
   function triggerInputEvent(element) {
     /* ... */
-    // For contentEditable, the 'input' event is crucial.
-    // For regular inputs, both 'input' and 'change' are good.
-    const inputEvent = new Event('input', { bubbles: true, cancelable: true });
-    element.dispatchEvent(inputEvent);
-
-    if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
-      const changeEvent = new Event('change', {
-        bubbles: true,
-        cancelable: true,
-      });
-      element.dispatchEvent(changeEvent);
-    }
+    const eventInput = new Event('input', { bubbles: true, cancelable: true });
+    const eventChange = new Event('change', {
+      bubbles: true,
+      cancelable: true,
+    });
+    element.dispatchEvent(eventInput);
+    element.dispatchEvent(eventChange);
   }
   function findRichTextEditableArea(containerElement) {
     /* ... (use your last working version) ... */
@@ -199,28 +195,18 @@
     ) {
       return true;
     }
-    // Check if it's just <p><br></p> or similar empty structures
-    if (
-      editorElement.innerHTML.trim().toLowerCase().replace(/\s/g, '') ===
-      '<p><brclass="prosemirror-trailingbreak"></p>'
-    )
-      return true;
     if (editorElement.textContent.trim() === '') {
-      // Fallback to textContent
       return true;
     }
-    // More robust check for single empty paragraph, handling variations
-    const firstChild = editorElement.firstElementChild;
-    if (
-      editorElement.children.length === 1 &&
-      firstChild &&
-      firstChild.tagName === 'P' &&
-      (firstChild.innerHTML.trim() === '' ||
-        firstChild.innerHTML.trim().toLowerCase() === '<br>' ||
-        firstChild.innerHTML.trim().toLowerCase() ===
-          '<brclass="prosemirror-trailingbreak">')
-    ) {
+    const allParagraphs = editorElement.querySelectorAll('p');
+    if (allParagraphs.length === 1) {
+      const pContent = allParagraphs[0].innerHTML.trim().toLowerCase();
       if (
+        (pContent === '' ||
+          pContent === '<br>' ||
+          pContent.includes('prosemirror-trailingbreak') ||
+          pContent === ' ' ||
+          pContent === '\u00a0') &&
         editorElement.querySelectorAll(
           'img, table, ul, ol, pre, blockquote, hr, li'
         ).length === 0
@@ -229,114 +215,6 @@
       }
     }
     return false;
-  }
-
-  async function simulateTypingInRTE(rteElement, markdownText, fieldIdForLog) {
-    logger.log('⌨️', `Simulating typing for "${fieldIdForLog}"...`);
-    rteElement.focus();
-
-    // Clear existing placeholder or minimal content first if PM doesn't do it on first input
-    // This needs to be gentle not to trigger too many unwanted events before typing
-    if (isRichTextEditorEmpty(rteElement)) {
-      // Check if truly empty or just placeholder
-      const placeholder = rteElement.querySelector(
-        RICH_TEXT_PLACEHOLDER_SELECTOR
-      );
-      if (
-        placeholder ||
-        rteElement.innerHTML.trim().toLowerCase().includes('<p><br')
-      ) {
-        // Try to set a minimal valid empty state for ProseMirror before typing
-        // This helps if execCommand('selectAll') + execCommand('delete') is too aggressive
-        // Or if just starting to type doesn't clear the placeholder correctly.
-        document.execCommand('selectAll', false, null);
-        document.execCommand('delete', false, null); // Clears selection
-        triggerInputEvent(rteElement); // Notify PM of clear
-        await new Promise((resolve) => setTimeout(resolve, 30)); // Short pause
-      }
-    }
-
-    const lines = markdownText.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const lineText = lines[i];
-
-      if (lineText.trim() !== '' || i < lines.length - 1) {
-        // Process non-empty lines or if it's not the very last line (to ensure final Enter if markdown ends with newline)
-        // Insert the text of the line
-        // Using insertText is generally preferred for contentEditable
-        if (document.execCommand('insertText', false, lineText)) {
-          // logger.log(`  Typed line: "${lineText}"`);
-        } else {
-          logger.warn(
-            `[${fieldIdForLog}] execCommand('insertText') failed for line: "${lineText}". Trying alternative.`
-          );
-          // Fallback: This is much harder and less reliable.
-          // For now, we'll log and continue. True character-by-character simulation is complex.
-          // A simple innerHTML append here would break ProseMirror's model.
-          // We could try inserting at selection, but that's also non-trivial.
-          rteElement.textContent += lineText; // Very basic fallback, likely won't trigger PM rules well
-        }
-        triggerInputEvent(rteElement); // Crucial for ProseMirror to process the inserted text and apply input rules
-      }
-
-      // If it's not the last line, or if it is the last line but the original markdown ended with a newline (implying a final paragraph)
-      // simulate an "Enter" key press.
-      if (
-        i < lines.length - 1 ||
-        (i === lines.length - 1 && markdownText.endsWith('\n'))
-      ) {
-        // logger.log('  Simulating Enter...');
-
-        // Dispatching keyboard events for "Enter"
-        // Note: Programmatic key events don't always behave identically to user-generated ones,
-        // especially for complex editors. ProseMirror might rely more on the 'input' event after 'insertText'
-        // or have specific commands for inserting paragraphs.
-        const enterEventDown = new KeyboardEvent('keydown', {
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true,
-        });
-        const enterEventBeforeInput = new Event('beforeinput', {
-          bubbles: true,
-          cancelable: true,
-          inputType: 'insertParagraph',
-        }); // More modern
-        const enterEventUp = new KeyboardEvent('keyup', {
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true,
-        });
-
-        rteElement.dispatchEvent(enterEventDown);
-        rteElement.dispatchEvent(enterEventBeforeInput); // Some editors listen to this
-
-        // Instead of relying on key events to create the paragraph,
-        // we can try using execCommand again if 'insertParagraph' is supported,
-        // or let the next 'insertText' on a new (empty) line implicitly start a new paragraph.
-        // Most ProseMirror setups will create a new paragraph upon 'input' event after 'insertText'
-        // if the previous text ended a block or if an "Enter" was simulated that PM recognized.
-        // The most important thing is that PM registers the 'input' from the line text.
-        // The next line's insertText will then likely go into a new paragraph.
-        // If PM's input rules for Enter are robust, the keydown might be enough.
-        // For now, the triggerInputEvent after lineText is the primary mechanism for rules.
-
-        // If `insertParagraph` is a command PM is set up for, this would be ideal:
-        // document.execCommand('insertParagraph', false, null);
-        // triggerInputEvent(rteElement);
-
-        rteElement.dispatchEvent(enterEventUp); // Complete the key sequence
-      }
-      await new Promise((resolve) =>
-        setTimeout(resolve, RTE_LINE_TYPING_DELAY_MS)
-      );
-    }
-    logger.log('✅', `Finished simulating typing for "${fieldIdForLog}".`);
   }
 
   async function applyTemplateToFields(template) {
@@ -349,7 +227,7 @@
     }
     logger.log('🧠', 'Applying template to fields...', template);
 
-    const injectedSimpleTextFields = new Map();
+    const injectedSimpleTextFields = new Map(); // Store { fieldId: { target, value } } for simple fields
 
     for (const field of template.fields) {
       if (field.type !== 'text') {
@@ -366,7 +244,7 @@
       let targetElement = null;
       let isRichText = false;
       const fieldIdForLog = field.displayName || field.id;
-      // logger.log(`[${fieldIdForLog}] Processing field. Type: ${field.type}`); // Reduced verbosity
+      logger.log(`[${fieldIdForLog}] Processing field. Type: ${field.type}`);
 
       const outerFieldWrapperSelector = `[data-testid="${OUTER_FIELD_WRAPPER_TESTID_PREFIX}${field.id}"]`;
       const outerFieldWrapper = document.querySelector(
@@ -374,11 +252,19 @@
       );
 
       if (outerFieldWrapper) {
+        logger.log(
+          `[${fieldIdForLog}] Found OUTER field wrapper:`,
+          outerFieldWrapper
+        );
         const rteAreaViaInnerWrapper =
           findRichTextEditableArea(outerFieldWrapper);
         if (rteAreaViaInnerWrapper) {
           targetElement = rteAreaViaInnerWrapper;
           isRichText = true;
+          logger.log(
+            `[${fieldIdForLog}] Determined as RICH TEXT field. Target:`,
+            targetElement
+          );
         } else {
           targetElement =
             outerFieldWrapper.querySelector(
@@ -396,14 +282,23 @@
               targetElement.isContentEditable &&
               findRichTextEditableArea(targetElement)
             ) {
-              isRichText = true;
+              isRichText = true; // It was a generic CE that's also an RTE
             }
+            logger.log(
+              `[${fieldIdForLog}] Determined as STANDARD TEXT/GENERIC CE field. Target:`,
+              targetElement
+            );
+          } else {
+            logger.warn(
+              `[${fieldIdForLog}] OUTER wrapper found, but no recognized input/RTE area inside.`
+            );
           }
         }
       } else {
         logger.warn(
-          `[${fieldIdForLog}] OUTER field wrapper NOT found: ${outerFieldWrapperSelector}.`
+          `[${fieldIdForLog}] OUTER field wrapper NOT found using selector: ${outerFieldWrapperSelector}.`
         );
+        // Optional: Fallback to direct ID/Name if needed for some fields
       }
 
       if (!targetElement) {
@@ -419,10 +314,33 @@
 
       // --- Apply Injection ---
       if (isRichText) {
-        const doActualRTEInjection = async () => {
-          // Made async for simulateTypingInRTE
-          await simulateTypingInRTE(targetElement, field.value, fieldIdForLog);
-          // No need to set .innerHTML or triggerInputEvent here if simulateTypingInRTE handles it
+        const injectRTEContent = () => {
+          logger.log('✍️', `Injecting into rich text editor: ${fieldIdForLog}`);
+          const paragraphs = field.value.split('\n');
+          let newHtml = '';
+          paragraphs.forEach((paraText, index) => {
+            const isLastParagraph = index === paragraphs.length - 1;
+            const escapedParaText = paraText
+              .replace(/&/g, '&')
+              .replace(/</g, '<')
+              .replace(/>/g, '>');
+            newHtml += `<p>${
+              paraText.trim() === ''
+                ? '<br class="ProseMirror-trailingBreak">'
+                : escapedParaText
+            }${
+              isLastParagraph ? '<br class="ProseMirror-trailingBreak">' : ''
+            }</p>`;
+          });
+          if (field.value.trim() === '')
+            newHtml = '<p><br class="ProseMirror-trailingBreak"></p>';
+          targetElement.innerHTML = newHtml;
+          targetElement.focus();
+          triggerInputEvent(targetElement);
+          logger.log(
+            '✅',
+            `Successfully injected into rich text editor: ${fieldIdForLog}`
+          );
         };
 
         if (!isRichTextEditorEmpty(targetElement)) {
@@ -431,18 +349,12 @@
             `Rich text editor: ${fieldIdForLog} already has content. Prompting user.`
           );
           try {
-            // showConfirmationModal calls onInject (doActualRTEInjection) or onKeep.
-            // onInject will be called after user clicks "Inject Template"
-            await showConfirmationModal(
-              fieldIdForLog,
-              doActualRTEInjection,
-              () => {
-                logger.log(
-                  '🚫',
-                  `User chose to keep draft for ${fieldIdForLog}.`
-                );
-              }
-            );
+            await showConfirmationModal(fieldIdForLog, injectRTEContent, () => {
+              logger.log(
+                '🚫',
+                `User chose to keep draft for ${fieldIdForLog}.`
+              );
+            });
           } catch (error) {
             logger.warn(
               '⚠️',
@@ -453,15 +365,15 @@
         } else {
           logger.log(
             'ℹ️',
-            `Rich text editor: ${fieldIdForLog} is empty. Injecting (simulating typing) directly.`
+            `Rich text editor: ${fieldIdForLog} is empty. Injecting directly.`
           );
-          await doActualRTEInjection();
+          injectRTEContent();
         }
       } else if (
         targetElement.value !== undefined &&
         typeof targetElement.value === 'string'
       ) {
-        // Standard text
+        // Standard text input/textarea
         if (targetElement.value.trim() === '') {
           targetElement.value = field.value;
           triggerInputEvent(targetElement);
@@ -481,7 +393,7 @@
           );
         }
       } else if (targetElement.isContentEditable) {
-        // Generic contentEditable
+        // Generic contentEditable (not an RTE)
         if (targetElement.textContent.trim() === '') {
           targetElement.textContent = field.value;
           triggerInputEvent(targetElement);
@@ -512,15 +424,55 @@
       );
     } // End of for...of loop for fields
 
-    // --- Post-injection re-check (no changes from previous version) ---
+    // --- Post-injection re-check for simple text fields that might have been cleared ---
     if (injectedSimpleTextFields.size > 0) {
-      /* ... */
+      logger.log(
+        '🛡️',
+        'Performing post-injection check for simple text fields...'
+      );
+      for (const [fieldId, data] of injectedSimpleTextFields) {
+        const { target, value: injectedValue, type } = data;
+        let currentValue = '';
+        if (type === 'input') {
+          currentValue = target.value;
+        } else if (type === 'contentEditable') {
+          currentValue = target.textContent;
+        }
+
+        if (currentValue.trim() !== injectedValue.trim()) {
+          // Check if it's truly empty now but was supposed to have the injectedValue
+          if (currentValue.trim() === '' && injectedValue.trim() !== '') {
+            logger.warn(
+              '🛡️',
+              `Simple text field "${fieldId}" appears to have been cleared. Re-injecting: "${injectedValue}"`
+            );
+            if (type === 'input') {
+              target.value = injectedValue;
+            } else if (type === 'contentEditable') {
+              target.textContent = injectedValue;
+            }
+            triggerInputEvent(target);
+          } else if (injectedValue.trim() !== '') {
+            // Only re-inject if there was something to inject and it changed
+            logger.warn(
+              '🛡️',
+              `Simple text field "${fieldId}" content changed. Re-injecting: "${injectedValue}" (Current: "${currentValue}")`
+            );
+            if (type === 'input') {
+              target.value = injectedValue;
+            } else if (type === 'contentEditable') {
+              target.textContent = injectedValue;
+            }
+            triggerInputEvent(target);
+          }
+        }
+      }
     }
+
     logger.log('🏁', 'Finished applying template fields.');
   }
 
   // --- Core Logic (loadAndApplyTemplate, onModalContextChange, observeSelectors, modalObserver - no changes from your previous version) ---
-  // ... (ensure these are exactly as in your last working version)
   async function loadAndApplyTemplate() {
     const currentProjectText = getSelectedValueFromPicker(PROJECT_SELECTOR_ID);
     const currentIssueTypeText = getSelectedValueFromPicker(
