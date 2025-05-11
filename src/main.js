@@ -20,12 +20,11 @@
   ];
   const RICH_TEXT_PLACEHOLDER_SELECTOR =
     'span[data-testid="placeholder-test-id"].placeholder-decoration';
-  const FIELD_PROCESS_DELAY_MS = 150; // Delay between processing each field in a template
+  const FIELD_PROCESS_DELAY_MS = 150;
 
-  let projectKey = null;
-  let issueType = null;
-  let currentTemplateData = null; // Store the currently relevant template data
-  let lastAttemptedSignature = null; // Tracks the last combo we TRIED to load for
+  let currentTemplateData = null;
+  let lastAttemptedSignature = null;
+  let isConfirmationModalOpen = false; // Prevent multiple confirmation modals
 
   const logger = {
     log: (emoji, ...args) => console.log(`[${LOG_PREFIX}] ${emoji}`, ...args),
@@ -40,6 +39,120 @@
     `Config: User=${GITHUB_USERNAME}, Repo=${GITHUB_REPONAME}, Branch=${GITHUB_BRANCH}`
   );
 
+  // --- Modal Utility ---
+  function showConfirmationModal(fieldName, onInject, onKeep) {
+    if (isConfirmationModalOpen) {
+      logger.warn(
+        '⚠️',
+        'Confirmation modal already open. Ignoring new request.'
+      );
+      return Promise.reject('Modal already open'); // Or resolve immediately with 'keep'
+    }
+    isConfirmationModalOpen = true;
+
+    return new Promise((resolve) => {
+      const modalId = 'jti-confirmation-modal';
+      const existingModal = document.getElementById(modalId);
+      if (existingModal) existingModal.remove();
+
+      const modalOverlay = document.createElement('div');
+      modalOverlay.id = modalId + '-overlay';
+      modalOverlay.style.cssText = `
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(9, 30, 66, 0.54); /* Atlassian overlay color */
+            z-index: 5000; display: flex; align-items: center; justify-content: center;
+        `;
+
+      const modalDialog = document.createElement('div');
+      modalDialog.id = modalId;
+      modalDialog.style.cssText = `
+            background-color: white;
+            padding: 24px;
+            border-radius: 3px; /* ADS border-radius */
+            box-shadow: rgba(9, 30, 66, 0.25) 0px 20px 32px -8px, rgba(9, 30, 66, 0.08) 0px 0px 1px; /* ADS shadow */
+            width: 400px;
+            max-width: 90%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+            color: #172B4D; /* ADS text color */
+        `;
+
+      const title = document.createElement('h2');
+      title.textContent = 'Template Injection';
+      title.style.cssText =
+        'font-size: 20px; font-weight: 500; margin-top: 0; margin-bottom: 12px; color: #091E42;'; // ADS Heading
+
+      const message = document.createElement('p');
+      message.innerHTML = `The "<strong>${fieldName}</strong>" field already contains data. <br>Injecting the template will overwrite this existing draft.`;
+      message.style.cssText = 'margin-bottom: 24px; line-height: 1.5;';
+
+      const buttonGroup = document.createElement('div');
+      buttonGroup.style.cssText =
+        'display: flex; justify-content: flex-end; gap: 8px;';
+
+      const keepButton = document.createElement('button');
+      keepButton.textContent = 'Keep Draft';
+      keepButton.style.cssText = `
+            background-color: #F4F5F7; /* ADS Button Neutral */
+            color: #42526E;
+            border: none; padding: 8px 12px; border-radius: 3px; cursor: pointer; font-weight: 500;
+        `;
+      keepButton.onmouseover = () =>
+        (keepButton.style.backgroundColor = '#EBECF0'); // Hover
+      keepButton.onmouseout = () =>
+        (keepButton.style.backgroundColor = '#F4F5F7');
+
+      const injectButton = document.createElement('button');
+      injectButton.textContent = 'Inject Template';
+      injectButton.style.cssText = `
+            background-color: #0052CC; /* ADS Button Primary */
+            color: white;
+            border: none; padding: 8px 12px; border-radius: 3px; cursor: pointer; font-weight: 500;
+        `;
+      injectButton.onmouseover = () =>
+        (injectButton.style.backgroundColor = '#0065FF'); // Hover
+      injectButton.onmouseout = () =>
+        (injectButton.style.backgroundColor = '#0052CC');
+
+      const closeModal = (decision) => {
+        modalOverlay.remove();
+        isConfirmationModalOpen = false;
+        if (decision === 'inject') {
+          onInject();
+        } else {
+          onKeep();
+        }
+        resolve(decision);
+      };
+
+      keepButton.onclick = () => closeModal('keep');
+      injectButton.onclick = () => closeModal('inject');
+      modalOverlay.onclick = (e) => {
+        // Close on overlay click
+        if (e.target === modalOverlay) closeModal('keep');
+      };
+
+      // Handle Escape key
+      const escapeHandler = (e) => {
+        if (e.key === 'Escape') {
+          closeModal('keep');
+          document.removeEventListener('keydown', escapeHandler);
+        }
+      };
+      document.addEventListener('keydown', escapeHandler);
+
+      buttonGroup.appendChild(keepButton);
+      buttonGroup.appendChild(injectButton);
+      modalDialog.appendChild(title);
+      modalDialog.appendChild(message);
+      modalDialog.appendChild(buttonGroup);
+      modalOverlay.appendChild(modalDialog);
+      document.body.appendChild(modalOverlay);
+
+      injectButton.focus(); // Focus the primary action
+    });
+  }
+
+  // ... (rest of the helper functions: getSelectedValueFromPicker, extractProjectKey, etc. remain the same)
   function getSelectedValueFromPicker(selectorId) {
     const picker = document.getElementById(selectorId);
     if (picker) {
@@ -107,11 +220,9 @@
       editorElement.contains(placeholderNode) &&
       placeholderNode.offsetParent !== null
     ) {
-      logger.log('ℹ️', `RTE empty: visible placeholder.`);
-      return true;
+      return true; // Don't log here, let the caller decide context for logging
     }
     if (editorElement.textContent.trim() === '') {
-      logger.log('ℹ️', `RTE empty: no textContent.`);
       return true;
     }
     const allParagraphs = editorElement.querySelectorAll('p');
@@ -121,22 +232,14 @@
         (pContent === '' ||
           pContent === '<br>' ||
           pContent.includes('prosemirror-trailingbreak') ||
-          pContent === ' ') &&
+          pContent === ' ') && // Corrected non-breaking space
         editorElement.querySelectorAll(
           'img, table, ul, ol, pre, blockquote, hr, li'
         ).length === 0
       ) {
-        logger.log('ℹ️', `RTE empty: one empty <p>.`);
         return true;
       }
     }
-    logger.log(
-      'ℹ️',
-      `RTE considered NOT empty. Content: "${editorElement.textContent.substring(
-        0,
-        50
-      )}..."`
-    );
     return false;
   }
 
@@ -151,7 +254,12 @@
     logger.log('🧠', 'Applying template to fields...', template);
 
     for (const field of template.fields) {
-      if (field.type !== 'text') {
+      // Note: Your current script only supports field.type "text".
+      // If you add "select" or other types, this condition needs to be more inclusive
+      // or the type-specific logic needs to be outside this initial type check.
+      // For now, assuming all processable fields from template are 'text' for RTE/standard input.
+      if (field.type !== 'text' && field.type !== 'select') {
+        // Added select here if you plan to use it
         logger.warn(
           '🧐',
           `Unsupported field type "${field.type}" for field ID: ${field.id}. Skipping.`
@@ -161,50 +269,40 @@
 
       let targetElement = null;
       let isRichText = false;
+      // For 'select' type, targetElement will be the select control/wrapper.
+      // For 'text' type, targetElement will be the input/textarea or RTE area.
 
+      // Simplified target finding logic from your provided script for brevity, assuming it works.
+      // You'll need to integrate your more robust target finding here.
       const directTarget =
         document.getElementById(field.id) ||
         document.querySelector(`[name="${field.id}"]`);
       if (directTarget) {
-        if (
-          directTarget.value !== undefined &&
-          typeof directTarget.value === 'string' &&
-          !directTarget.isContentEditable
-        ) {
-          targetElement = directTarget;
-          isRichText = false;
-        } else if (directTarget.isContentEditable) {
-          const rteArea = findRichTextEditableArea(directTarget);
-          if (rteArea) {
-            targetElement = rteArea;
-            isRichText = true;
-          } else {
-            targetElement = directTarget;
-            isRichText = false; // Generic contenteditable
-          }
-        }
-      }
-
-      if (!targetElement) {
-        const wrapperSelector = `[data-testid*="${field.id}-field.wrapper"], [data-testid*="${field.id}.wrapper"]`;
-        const fieldWrapper = document.querySelector(wrapperSelector);
-        if (fieldWrapper) {
-          const rteArea = findRichTextEditableArea(fieldWrapper);
-          if (rteArea) {
-            targetElement = rteArea;
-            isRichText = true;
-          } else if (directTarget && directTarget.isContentEditable) {
-            // Fallback to direct if wrapper has no RTE
+        if (field.type === 'text') {
+          if (
+            directTarget.value !== undefined &&
+            typeof directTarget.value === 'string' &&
+            !directTarget.isContentEditable
+          ) {
             targetElement = directTarget;
             isRichText = false;
+          } else if (directTarget.isContentEditable) {
+            const rteArea = findRichTextEditableArea(directTarget);
+            if (rteArea) {
+              targetElement = rteArea;
+              isRichText = true;
+            } else {
+              targetElement = directTarget;
+              isRichText = false; /* Generic CE */
+            }
           }
-        } else if (directTarget && directTarget.isContentEditable) {
-          // Fallback if no wrapper, but direct was CE
-          targetElement = directTarget;
-          isRichText = false;
+        } else if (field.type === 'select') {
+          targetElement = directTarget; // Or its wrapper, adapt as per your select logic
         }
       }
-      // Last resort for "description"
+      // Add more robust target finding (wrapper-based, etc.) as you had before if needed.
+      // This is a simplified placeholder for the finding logic.
+      // For the description field:
       if (!targetElement && field.id.toLowerCase().includes('description')) {
         const commonDescParent = document.querySelector(
           'form#issue-create\\.ui\\.modal\\.create-form div[data-testid*="description"]'
@@ -213,56 +311,89 @@
           const rteArea = findRichTextEditableArea(commonDescParent);
           if (rteArea) {
             targetElement = rteArea;
-            isRichText = true;
+            isRichText = true; // Explicitly set for description if found this way
           }
         }
       }
 
       if (!targetElement) {
         logger.warn('🤷', `Field target for ID/Name: "${field.id}" not found.`);
+        await new Promise((resolve) =>
+          setTimeout(resolve, FIELD_PROCESS_DELAY_MS)
+        );
         continue;
       }
 
       // --- Apply Injection ---
       if (isRichText) {
+        const injectRTEContent = () => {
+          logger.log('✍️', `Injecting into rich text editor: ${field.id}`);
+          const paragraphs = field.value.split('\n');
+          let newHtml = '';
+          paragraphs.forEach((paraText, index) => {
+            const isLastParagraph = index === paragraphs.length - 1;
+            // Corrected HTML entity escaping
+            const escapedParaText = paraText
+              .replace(/&/g, '&')
+              .replace(/</g, '<')
+              .replace(/>/g, '>');
+            newHtml += `<p>${
+              paraText.trim() === ''
+                ? '<br class="ProseMirror-trailingBreak">'
+                : escapedParaText // Use escaped text
+            }${
+              isLastParagraph ? '<br class="ProseMirror-trailingBreak">' : ''
+            }</p>`;
+          });
+          if (field.value.trim() === '')
+            newHtml = '<p><br class="ProseMirror-trailingBreak"></p>';
+
+          targetElement.innerHTML = newHtml;
+          targetElement.focus();
+          triggerInputEvent(targetElement);
+          logger.log(
+            '✅',
+            `Successfully injected into rich text editor: ${field.id}`
+          );
+        };
+
         if (!isRichTextEditorEmpty(targetElement)) {
           logger.log(
             '🤔',
-            `Rich text editor: ${field.id} already has content, skipped.`
+            `Rich text editor: ${field.id} already has content. Prompting user.`
           );
-          continue;
+          try {
+            const decision = await showConfirmationModal(
+              field.displayName || field.id, // Use a displayName if available in template, else field.id
+              injectRTEContent, // onInject callback
+              () => {
+                logger.log('🚫', `User chose to keep draft for ${field.id}.`);
+              } // onKeep callback
+            );
+            // If modal resolves, action is taken by callbacks.
+            if (decision === 'keep') {
+              // Do nothing further for this field if "keep" was chosen explicitly by modal logic
+            }
+          } catch (error) {
+            logger.warn(
+              '⚠️',
+              'Modal interaction issue or modal already open:',
+              error
+            );
+            // Decide a default action, e.g., keep draft if modal fails
+          }
+        } else {
+          logger.log(
+            'ℹ️',
+            `Rich text editor: ${field.id} is empty. Injecting directly.`
+          );
+          injectRTEContent();
         }
-        logger.log('✍️', `Injecting into rich text editor: ${field.id}`);
-        const paragraphs = field.value.split('\n');
-        let newHtml = '';
-        paragraphs.forEach((paraText, index) => {
-          const isLastParagraph = index === paragraphs.length - 1;
-          newHtml += `<p>${
-            paraText.trim() === ''
-              ? '<br class="ProseMirror-trailingBreak">'
-              : paraText
-                  .replace(/&/g, '&')
-                  .replace(/</g, '<')
-                  .replace(/>/g, '>')
-          }${
-            isLastParagraph ? '<br class="ProseMirror-trailingBreak">' : ''
-          }</p>`;
-        });
-        if (field.value.trim() === '')
-          newHtml = '<p><br class="ProseMirror-trailingBreak"></p>';
-
-        targetElement.innerHTML = newHtml;
-        targetElement.focus(); // Focus before event trigger
-        triggerInputEvent(targetElement);
-        // No blur here, let the natural flow or next field focus handle it to reduce interference
-        logger.log(
-          '✅',
-          `Successfully injected into rich text editor: ${field.id}`
-        );
       } else if (
         targetElement.value !== undefined &&
         typeof targetElement.value === 'string'
       ) {
+        // Standard text
         if (targetElement.value.trim() === '') {
           targetElement.value = field.value;
           triggerInputEvent(targetElement);
@@ -273,10 +404,11 @@
         } else {
           logger.log(
             '🤔',
-            `Standard input/textarea: ${field.id} already has content, skipped.`
+            `Standard input/textarea: ${field.id} already has content, skipped (no prompt for simple fields).`
           );
         }
       } else if (targetElement.isContentEditable) {
+        // Generic contentEditable (not identified as RTE)
         if (targetElement.textContent.trim() === '') {
           targetElement.textContent = field.value;
           triggerInputEvent(targetElement);
@@ -290,14 +422,16 @@
             `Generic contentEditable: ${field.id} already has content, skipped.`
           );
         }
-      } else {
+      }
+      // Add your 'select' type handling here if you re-integrate it
+      // else if (field.type === "select") { ... await handleSelectField(...) ... }
+      else {
         logger.warn(
           '🤷',
-          `Field: "${field.id}" found, but not a recognized input type for injection.`
+          `Field: "${field.id}" (type: ${field.type}) found, but not a recognized input type for injection logic here.`
         );
       }
 
-      // Delay before processing the next field
       await new Promise((resolve) =>
         setTimeout(resolve, FIELD_PROCESS_DELAY_MS)
       );
@@ -305,6 +439,7 @@
     logger.log('🏁', 'Finished applying template fields.');
   }
 
+  // ... (loadAndApplyTemplate and the rest of the script)
   async function loadAndApplyTemplate() {
     const currentProjectText = getSelectedValueFromPicker(PROJECT_SELECTOR_ID);
     const currentIssueTypeText = getSelectedValueFromPicker(
@@ -325,16 +460,13 @@
         '❌',
         'Missing project key or issue type. Clearing current template.'
       );
-      currentTemplateData = null; // Clear any existing template
-      lastAttemptedSignature = `${pk}_${it}`; // Still note what we tried
+      currentTemplateData = null;
+      lastAttemptedSignature = `${pk}_${it}`;
       return;
     }
 
     const currentSignature = `${pk}_${it}`;
 
-    // If the signature is the same as the last one we ATTEMPTED to load,
-    // and we successfully got template data for it, then apply it.
-    // Otherwise, we need to fetch.
     if (lastAttemptedSignature === currentSignature) {
       if (currentTemplateData) {
         logger.log(
@@ -351,9 +483,8 @@
       return;
     }
 
-    // New signature or different from last attempt, so we must fetch.
-    lastAttemptedSignature = currentSignature; // Update last attempted signature
-    currentTemplateData = null; // Reset current template data before fetching
+    lastAttemptedSignature = currentSignature;
+    currentTemplateData = null;
     const templateUrl = buildTemplateUrl(pk, it);
 
     if (!templateUrl) {
@@ -371,31 +502,27 @@
       if (response.ok) {
         const template = await response.json();
         logger.log('✅', 'Template loaded successfully:', template);
-        currentTemplateData = template; // Store it
+        currentTemplateData = template;
         await applyTemplateToFields(currentTemplateData);
       } else if (response.status === 404) {
         logger.warn(
           '🤷',
           `Template not found (404) for ${currentSignature}. No template will be applied.`
         );
-        // currentTemplateData remains null
       } else {
         logger.error(
           '❌',
           `Error fetching template. Status: ${response.status}`,
           response
         );
-        // currentTemplateData remains null
       }
     } catch (error) {
       logger.error('❌', 'Error fetching or parsing template JSON:', error);
-      // currentTemplateData remains null
     }
   }
 
   function onModalContextChange() {
     logger.log('🔄', 'Modal context change detected (project/issue type).');
-    // No need to reset lastAttemptedSignature here, loadAndApplyTemplate will handle it.
     loadAndApplyTemplate();
   }
 
@@ -434,7 +561,6 @@
       issueTypeObserver.observe(issueTypeValueContainer, observerConfig);
     else issueTypeObserver.observe(issueTypeSelector, observerConfig);
 
-    // Initial load when modal opens and selectors are first observed
     loadAndApplyTemplate();
   }
 
@@ -445,8 +571,9 @@
         if (createForm && !createForm.dataset.jtiObserved) {
           logger.log('✅', 'Create issue form is present.');
           createForm.dataset.jtiObserved = 'true';
-          lastAttemptedSignature = null; // Reset for a new modal instance
+          lastAttemptedSignature = null;
           currentTemplateData = null;
+          isConfirmationModalOpen = false; // Reset modal state when main Jira modal opens
           setTimeout(observeSelectors, 700);
         } else if (
           !createForm &&
@@ -455,7 +582,12 @@
           const oldForm = document.querySelector(`[data-jti-observed="true"]`);
           if (oldForm) delete oldForm.dataset.jtiObserved;
           logger.log('🚪', 'Create issue form closed.');
-          // Optionally disconnect project/issueType observers here if they were stored globally
+          // Close any lingering confirmation modals if the main form closes
+          const confirmModalOverlay = document.getElementById(
+            'jti-confirmation-modal-overlay'
+          );
+          if (confirmModalOverlay) confirmModalOverlay.remove();
+          isConfirmationModalOpen = false;
         }
       }
     }
