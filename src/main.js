@@ -15,11 +15,19 @@
     'issue-create.ui.modal.create-form.project-picker.project-select';
   const ISSUE_TYPE_SELECTOR_ID =
     'issue-create.ui.modal.create-form.type-picker.issue-type-select';
+  // Selectors for detecting rich text editors (e.g., ProseMirror)
+  const RICH_TEXT_EDITOR_SELECTORS = [
+    '.ProseMirror[role="textbox"][contenteditable="true"]',
+    '#ak-editor-textarea[contenteditable="true"]', // Often specific to Jira's editor
+    'div[data-testid*="rich-text"][contenteditable="true"]', // More generic testid
+  ];
+  const RICH_TEXT_PLACEHOLDER_SELECTOR =
+    'span[data-testid="placeholder-test-id"].placeholder-decoration';
   // --- END INTERNAL CONFIGURATION ---
 
   let projectKey = null;
   let issueType = null;
-  let lastInjectedSignature = null; // To avoid multiple re-injections for the same combination
+  let lastInjectedSignature = null;
 
   const logger = {
     log: (emoji, ...args) => console.log(`[${LOG_PREFIX}] ${emoji}`, ...args),
@@ -34,19 +42,15 @@
     `Config: User=${GITHUB_USERNAME}, Repo=${GITHUB_REPONAME}, Branch=${GITHUB_BRANCH}`
   );
 
-  function getSelectedValueFromPicker(selectorId, attribute = 'aria-label') {
+  function getSelectedValueFromPicker(selectorId) {
     const picker = document.getElementById(selectorId);
     if (picker) {
-      // Jira often uses a div with a role and aria-label to display the selected value.
-      // The text content might be in a span inside.
-      // Target the container that has the relevant information.
       const valueContainer = picker.querySelector(
         '.single-select__value-container, [class*="singleValue"], [class*="placeholder"]'
       );
       if (valueContainer && valueContainer.textContent) {
         return valueContainer.textContent.trim();
       }
-      // Fallback if the structure is different, or for simpler selects (less likely in modern Jira)
       if (picker.value) return picker.value;
       if (picker.textContent) return picker.textContent.trim();
     }
@@ -55,22 +59,16 @@
 
   function extractProjectKey(projectText) {
     if (!projectText) return null;
-    // Ex: "ERP - GEO (EG)" -> EG
     const match = projectText.match(/\(([^)]+)\)$/);
-    if (match && match[1]) {
-      return match[1].toUpperCase();
-    }
-    // Fallback: if no parentheses, try to take an abbreviation or keyword
-    // This is an example, adapt according to project naming conventions
+    if (match && match[1]) return match[1].toUpperCase();
     const parts = projectText.split(' ');
     if (parts.length > 1 && parts[parts.length - 1].length <= 4)
       return parts[parts.length - 1].toUpperCase();
-    return projectText.split(' ')[0].toUpperCase(); // Takes the first word in uppercase as a fallback
+    return projectText.split(' ')[0].toUpperCase();
   }
 
   function formatIssueType(issueTypeText) {
     if (!issueTypeText) return null;
-    // Ex: "User Story" -> USER-STORY
     return issueTypeText.toUpperCase().replace(/\s+/g, '-');
   }
 
@@ -81,7 +79,6 @@
   }
 
   function triggerInputEvent(element) {
-    // For Jira (React/etc.) to recognize the change
     const eventInput = new Event('input', { bubbles: true, cancelable: true });
     const eventChange = new Event('change', {
       bubbles: true,
@@ -89,6 +86,70 @@
     });
     element.dispatchEvent(eventInput);
     element.dispatchEvent(eventChange);
+  }
+
+  function isRichTextEditor(element) {
+    if (!element || !element.matches) return false;
+    for (const selector of RICH_TEXT_EDITOR_SELECTORS) {
+      if (element.matches(selector)) {
+        return true;
+      }
+    }
+    // Fallback: if it's a div, contenteditable, and has a role of textbox, good chance it's an RTE
+    if (
+      element.tagName === 'DIV' &&
+      element.isContentEditable &&
+      element.getAttribute('role') === 'textbox'
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function isRichTextEditorEmpty(editorElement) {
+    if (!editorElement) return true; // If no element, consider it "empty" for safety
+
+    const placeholderNode = editorElement.querySelector(
+      RICH_TEXT_PLACEHOLDER_SELECTOR
+    );
+    if (placeholderNode && editorElement.contains(placeholderNode)) {
+      logger.log('ℹ️', `Rich text editor has placeholder, considering empty.`);
+      return true;
+    }
+    if (editorElement.textContent.trim() === '') {
+      logger.log(
+        'ℹ️',
+        `Rich text editor has no textContent, considering empty.`
+      );
+      return true;
+    }
+
+    // Check for a single, effectively empty paragraph
+    const allParagraphs = editorElement.querySelectorAll('p');
+    if (allParagraphs.length === 1) {
+      const pContent = allParagraphs[0].innerHTML.trim().toLowerCase();
+      // Check for common empty paragraph structures
+      if (
+        pContent === '' ||
+        pContent === '<br>' ||
+        pContent.includes('prosemirror-trailingbreak') ||
+        pContent === ' '
+      ) {
+        // Ensure no other significant content like images, tables, lists exists
+        if (
+          editorElement.querySelectorAll(
+            'img, table, ul, ol, pre, blockquote, hr, li'
+          ).length === 0
+        ) {
+          logger.log(
+            'ℹ️',
+            `Rich text editor has one empty <p>, considering empty.`
+          );
+          return true;
+        }
+      }
+    }
+    return false; // If none of the above, assume it has content
   }
 
   async function injectTemplate(templateData) {
@@ -103,108 +164,143 @@
     }
 
     templateData.fields.forEach((field) => {
-      if (field.type === 'text') {
-        // For now, only "text" is handled
-        // Jira often uses contenteditable divs for rich text fields like description.
-        // Simple fields like summary can be input or textarea.
-        let targetElement = document.getElementById(field.id);
+      if (field.type !== 'text') {
+        logger.warn(
+          '🧐',
+          `Unsupported field type "${field.type}" for field ID: ${field.id}. Skipping.`
+        );
+        return; // continue to next field
+      }
 
-        if (!targetElement) {
-          // Try to find by name if ID is not found (for more flexibility)
-          targetElement = document.querySelector(`[name="${field.id}"]`);
+      let targetElement =
+        document.getElementById(field.id) ||
+        document.querySelector(`[name="${field.id}"]`);
+
+      if (!targetElement) {
+        // Special case: some rich text editors might not have a simple id/name on the main editable div,
+        // but rather on a wrapper. Let's try to find a rich text editor within the field's general area
+        // if the primary targetElement isn't found or isn't suitable.
+        // This is heuristic and might need refinement based on Jira's structure.
+        const fieldWrapper = document.querySelector(
+          `[data-testid*="${field.id}"], [aria-labelledby*="${field.id}"]`
+        );
+        if (fieldWrapper) {
+          for (const selector of RICH_TEXT_EDITOR_SELECTORS) {
+            const rteInWrapper = fieldWrapper.querySelector(selector);
+            if (rteInWrapper) {
+              targetElement = rteInWrapper;
+              logger.log(
+                'ℹ️',
+                `Found rich text editor for "${field.id}" within a wrapper.`
+              );
+              break;
+            }
+          }
+        }
+      }
+
+      if (!targetElement) {
+        logger.warn('🤷', `Field target for ID/Name: "${field.id}" not found.`);
+        return; // continue to next field
+      }
+
+      // Determine injection strategy
+      if (
+        targetElement.value !== undefined &&
+        typeof targetElement.value === 'string' &&
+        !targetElement.isContentEditable
+      ) {
+        // --- Standard <input> or <textarea> Handling (not contentEditable) ---
+        if (targetElement.value.trim() === '') {
+          targetElement.value = field.value;
+          triggerInputEvent(targetElement);
+          logger.log(
+            '✍️',
+            `Injected into standard input/textarea: ${field.id}`
+          );
+        } else {
+          logger.log(
+            '🤔',
+            `Standard input/textarea: ${field.id} already has content, skipped.`
+          );
+        }
+      } else if (isRichTextEditor(targetElement)) {
+        // --- Rich Text Editor Handling (e.g., ProseMirror) ---
+        if (!isRichTextEditorEmpty(targetElement)) {
+          logger.log(
+            '🤔',
+            `Rich text editor: ${field.id} already has content, skipped.`
+          );
+          return;
         }
 
-        // Specific case for the description field which is often a rich text editor (Prosemirror)
-        if (field.id === 'description' && !targetElement) {
-          targetElement = document.querySelector(
-            '.ProseMirror[role="textbox"], div[aria-label="Main content area"]'
-          );
-          // If it's a contenteditable div, text needs to be injected differently.
-          if (targetElement && targetElement.isContentEditable) {
-            if (targetElement.textContent.trim() === '') {
-              // Check if content is empty
-              // For Prosemirror, you sometimes need to simulate typing or use specific commands.
-              // A simple approach is to set focus and insert text.
-              // However, the simplest and often effective way is to modify `innerHTML` or `textContent`
-              // and trigger events.
-              // For description, it might be multiple <p>
-              const paragraphs = field.value.split('\n');
-              targetElement.innerHTML = paragraphs
-                .map(
-                  (pText) =>
-                    `<p>${pText
-                      .replace(/&/g, '&')
-                      .replace(/</g, '<')
-                      .replace(/>/g, '>')}</p>`
-                )
-                .join('');
-              triggerInputEvent(targetElement); // May require more specific events for Prosemirror
-              logger.log(
-                '✍️',
-                `Injected into rich text field (e.g., description) ID: ${field.id}`
-              );
-            } else {
-              logger.log(
-                '🤔',
-                `Rich text field ID: ${field.id} already has content, skipped.`
-              );
-            }
-            return; // Exit after handling the description field
-          } else if (targetElement && targetElement.value !== undefined) {
-            // It's a standard input/textarea
-            if (targetElement.value.trim() === '') {
-              targetElement.value = field.value;
-              triggerInputEvent(targetElement);
-              logger.log('✍️', `Injected into field ID: ${field.id}`);
-            } else {
-              logger.log(
-                '🤔',
-                `Field ID: ${field.id} already has content, skipped.`
-              );
-            }
-          } else {
-            logger.warn(
-              '🤷',
-              `Field with ID/Name: ${field.id} (description fallback) not found or not a standard input/textarea/contentEditable.`
-            );
-          }
-        } else if (targetElement && targetElement.value !== undefined) {
-          // For <input> and <textarea>
-          if (targetElement.value.trim() === '') {
-            targetElement.value = field.value;
-            triggerInputEvent(targetElement);
-            logger.log('✍️', `Injected into field ID: ${field.id}`);
-          } else {
-            logger.log(
-              '🤔',
-              `Field ID: ${field.id} already has content, skipped.`
-            );
-          }
-        } else if (targetElement && targetElement.isContentEditable) {
-          // For generic contenteditable div
-          if (targetElement.textContent.trim() === '') {
-            targetElement.textContent = field.value;
-            triggerInputEvent(targetElement);
-            logger.log(
-              '✍️',
-              `Injected into contentEditable field ID: ${field.id}`
-            );
-          } else {
-            logger.log(
-              '🤔',
-              `contentEditable field ID: ${field.id} already has content, skipped.`
-            );
-          }
+        logger.log(
+          '✍️',
+          `Attempting injection into rich text editor: ${field.id}`
+        );
+        const paragraphs = field.value.split('\n');
+        let newHtml = '';
+        if (
+          paragraphs.length === 0 ||
+          (paragraphs.length === 1 && paragraphs[0].trim() === '')
+        ) {
+          newHtml = '<p><br class="ProseMirror-trailingBreak"></p>'; // Ensure a trailingBreak for some editors
         } else {
-          logger.warn(
-            '🤷',
-            `Field with ID/Name: ${field.id} not found or not a standard input/textarea.`
+          paragraphs.forEach((paraText) => {
+            if (paraText.trim() === '') {
+              newHtml += '<p><br class="ProseMirror-trailingBreak"></p>';
+            } else {
+              const escapedPara = paraText
+                .replace(/&/g, '&')
+                .replace(/</g, '<')
+                .replace(/>/g, '>');
+              newHtml += `<p>${escapedPara}</p>`;
+            }
+          });
+        }
+        // Ensure the last paragraph also has a trailing break if it's the common pattern
+        if (
+          newHtml.endsWith('</p>') &&
+          !newHtml.endsWith('<br class="ProseMirror-trailingBreak"></p>')
+        ) {
+          const lastPIndex = newHtml.lastIndexOf('</p>');
+          newHtml =
+            newHtml.substring(0, lastPIndex) +
+            '<br class="ProseMirror-trailingBreak"></p>';
+        }
+
+        targetElement.innerHTML = newHtml;
+
+        targetElement.focus();
+        triggerInputEvent(targetElement);
+        // A small delay before blur can sometimes help ensure events propagate
+        setTimeout(() => targetElement.blur(), 50);
+        logger.log(
+          '✅',
+          `Successfully attempted injection into rich text editor: ${field.id}`
+        );
+      } else if (targetElement.isContentEditable) {
+        // --- Generic contentEditable div (fallback) ---
+        if (targetElement.textContent.trim() === '') {
+          // For simple contentEditable, textContent is often fine.
+          // For multi-line, we might want to insert <p> or <br> but it's less predictable
+          // than with known rich editors.
+          targetElement.textContent = field.value; // Simpler injection for generic contentEditable
+          triggerInputEvent(targetElement);
+          logger.log(
+            '✍️',
+            `Injected into generic contentEditable: ${field.id}`
+          );
+        } else {
+          logger.log(
+            '🤔',
+            `Generic contentEditable: ${field.id} already has content, skipped.`
           );
         }
       } else {
         logger.warn(
-          '🧐',
-          `Unsupported field type "${field.type}" for field ID: ${field.id}. Skipping.`
+          '🤷',
+          `Field: "${field.id}" found, but it's not a recognized input type for injection.`
         );
       }
     });
@@ -240,11 +336,8 @@
     if (lastInjectedSignature === currentSignature) {
       logger.log(
         '🧘',
-        `Template for ${currentSignature} was already processed for this form instance. Skipping re-fetch unless forced.`
+        `Template for ${currentSignature} was already processed for this form instance. Skipping re-fetch.`
       );
-      // We might want to re-apply if fields were manually cleared.
-      // But current logic is not to re-inject if fields are filled.
-      // And if project/type changes, lastInjectedSignature will be different.
       return;
     }
 
@@ -265,13 +358,13 @@
         const templateData = await response.json();
         logger.log('✅', 'Template loaded:', templateData);
         await injectTemplate(templateData);
-        lastInjectedSignature = currentSignature; // Mark as injected for this combination
+        lastInjectedSignature = currentSignature;
       } else if (response.status === 404) {
         logger.warn(
           '🤷',
           `Template not found (404) for ${projectKey}_${issueType}.json. No template will be applied.`
         );
-        lastInjectedSignature = null; // Reset to allow a new attempt if user re-selects
+        lastInjectedSignature = null;
       } else {
         logger.error(
           '❌',
@@ -299,50 +392,33 @@
     }
 
     logger.log('🔄', 'Observing project/issue type changes...');
-
-    // Jira might replace these elements or their content rather than just changing a value.
-    // So we observe changes in their parents or on themselves (attributes/childList).
-    // It's crucial to target the element that actually changes.
-    // Often, it's the text inside the selector that changes.
     const observerConfig = {
       childList: true,
       subtree: true,
       characterData: true,
     };
 
-    const projectObserver = new MutationObserver((mutationsList, observer) => {
+    const createObserverCallback = (logMessage, type) => (mutationsList) => {
       for (let mutation of mutationsList) {
-        // We check if the text changed, or if a relevant node was added/removed
         if (
           mutation.type === 'childList' ||
           mutation.type === 'characterData'
         ) {
-          logger.log('🔍', 'Project changed/detected.');
-          lastInjectedSignature = null; // Allow re-injection if project changes
+          logger.log(logMessage, `${type} changed/detected.`);
+          lastInjectedSignature = null; // Allow re-injection
           loadAndApplyTemplate();
-          return; // Process once per batch of mutations
+          return;
         }
       }
-    });
+    };
 
+    const projectObserver = new MutationObserver(
+      createObserverCallback('🔍', 'Project')
+    );
     const issueTypeObserver = new MutationObserver(
-      (mutationsList, observer) => {
-        for (let mutation of mutationsList) {
-          if (
-            mutation.type === 'childList' ||
-            mutation.type === 'characterData'
-          ) {
-            logger.log('🏷️', 'Issue Type changed/detected.');
-            lastInjectedSignature = null; // Allow re-injection if type changes
-            loadAndApplyTemplate();
-            return;
-          }
-        }
-      }
+      createObserverCallback('🏷️', 'Issue Type')
     );
 
-    // The elements where selectors display the value are often children of the main ID
-    // We observe the value container.
     const projectValueContainer = projectSelector.querySelector(
       '.single-select__value-container, [class*="singleValue"]'
     );
@@ -352,35 +428,28 @@
 
     if (projectValueContainer)
       projectObserver.observe(projectValueContainer, observerConfig);
-    else projectObserver.observe(projectSelector, observerConfig); // Fallback
+    else projectObserver.observe(projectSelector, observerConfig);
 
     if (issueTypeValueContainer)
       issueTypeObserver.observe(issueTypeValueContainer, observerConfig);
-    else issueTypeObserver.observe(issueTypeSelector, observerConfig); // Fallback
+    else issueTypeObserver.observe(issueTypeSelector, observerConfig);
 
-    // Initial call to load template if fields are already selected on opening
-    loadAndApplyTemplate();
-
-    // Cleanup: ensure observers are disconnected if the modal closes
-    // This is handled by the fact that these observers are created only when the modal is detected
-    // and they are bound to elements that disappear with the modal.
+    loadAndApplyTemplate(); // Initial call
   }
 
-  // Observe the opening of the creation modal
   const modalObserver = new MutationObserver((mutationsList, observer) => {
     for (let mutation of mutationsList) {
       if (mutation.type === 'childList') {
         const createForm = document.getElementById(CREATE_MODAL_ID);
         if (createForm && !createForm.dataset.jtiObserved) {
-          logger.log('✅', 'Form is present:', createForm);
-          createForm.dataset.jtiObserved = 'true'; // Mark to avoid multiple attachments
-          lastInjectedSignature = null; // Reset for a new modal
-          observeSelectors(); // Start observers for project/type
+          logger.log('✅', 'Form is present:', CREATE_MODAL_ID);
+          createForm.dataset.jtiObserved = 'true';
+          lastInjectedSignature = null;
+          setTimeout(observeSelectors, 500);
         } else if (
           !createForm &&
           document.querySelector(`[data-jti-observed="true"]`)
         ) {
-          // Modal has closed, clean up marker if necessary
           const oldForm = document.querySelector(`[data-jti-observed="true"]`);
           if (oldForm) delete oldForm.dataset.jtiObserved;
           logger.log(
@@ -392,7 +461,6 @@
     }
   });
 
-  // Start observing the document body for modal addition
   modalObserver.observe(document.body, { childList: true, subtree: true });
   logger.log('👀', 'Observing document body for create modal...');
 })();
