@@ -18,7 +18,7 @@
   // Replace with your GitHub username and repository name
   const GITHUB_USERNAME = 'FloLecoeuche'; // Replace with your username
   const GITHUB_REPONAME = 'jira-template-injector'; // Replace with your repository name
-  const GITHUB_BRANCH = 'feature/codev-gemini'; // Or the branch you want to use
+  const GITHUB_BRANCH = 'main'; // Or the branch you want to use
   // --- END CONFIGURATION ---
 
   const mainScriptUrl = `https://raw.githubusercontent.com/${GITHUB_USERNAME}/${GITHUB_REPONAME}/${GITHUB_BRANCH}/src/main.js`;
