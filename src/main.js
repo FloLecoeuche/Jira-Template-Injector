@@ -272,6 +272,56 @@
       // For 'select' type, targetElement will be the select control/wrapper.
       // For 'text' type, targetElement will be the input/textarea or RTE area.
 
+      // TODO: REMOVE THIS
+      logger.log(`[${field.id}] Attempting to find target...`);
+      const directTargetByIdOrName =
+        document.getElementById(field.id) ||
+        document.querySelector(`[name="${field.id}"]`);
+      logger.log(
+        `[${field.id}] directTargetByIdOrName:`,
+        directTargetByIdOrName
+      );
+
+      if (
+        !targetElement ||
+        (targetElement &&
+          !isRichText &&
+          field.id.toLowerCase().includes('description'))
+      ) {
+        const wrapperSelector = `[data-testid*="${field.id}-field.wrapper"], [data-testid*="${field.id}.wrapper"], [data-testid*="${field.id}"]`;
+        const fieldWrapperByTestId = document.querySelector(wrapperSelector);
+        logger.log(
+          `[${field.id}] fieldWrapperByTestId (selector: ${wrapperSelector}):`,
+          fieldWrapperByTestId
+        );
+      }
+
+      // Last resort for "description"
+      if (!targetElement && field.id.toLowerCase().includes('description')) {
+        const descParentSelector =
+          'form#issue-create\\.ui\\.modal\\.create-form div[data-testid*="description"]';
+        const commonDescriptionParent =
+          document.querySelector(descParentSelector);
+        logger.log(
+          `[${field.id}] commonDescriptionParent (selector: ${descParentSelector}):`,
+          commonDescriptionParent
+        );
+      }
+
+      logger.log(
+        `[${field.id}] Final targetElement before injection logic:`,
+        targetElement,
+        `isRichText: ${isRichText}`
+      );
+
+      if (!targetElement) {
+        logger.warn(
+          '🤷',
+          `[${field.id}] Field target for ID/Name: "${field.id}" not found after all attempts.`
+        );
+      }
+      // TODO: REMOVE THIS
+
       // Simplified target finding logic from your provided script for brevity, assuming it works.
       // You'll need to integrate your more robust target finding here.
       const directTarget =
